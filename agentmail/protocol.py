@@ -172,3 +172,47 @@ def thread_address(platform_address: str, thread_id: str) -> str:
     local, _, domain = platform_address.partition("@")
     local = local.split("+", 1)[0]           # never stack tags
     return f"{local}+{thread_id.lower()}@{domain}"
+
+
+#: A thread-opener below this is almost never self-contained. Deliberately generous — the
+#: point is to catch "your API is broken, please fix", not to police prose length.
+MIN_OPENER_CHARS = 240
+
+
+def opener_shortcomings(body: str, msg_type: str) -> list[str]:
+    """Advisory checks on a message that OPENS a thread. Never blocks; the caller warns.
+
+    The recipient is a different agent in a different repository whose session has never seen
+    yours: they cannot read your terminal, your logs or your tickets, and they may open this a
+    week later. A reply can lean on the thread above it — an opener cannot lean on anything,
+    and a thin one costs a full round trip between two poll-driven agents just to ask "what
+    did you actually run?".
+
+    Returns human-readable shortcomings. Heuristics, so they are surfaced as a warning and
+    never as a refusal: a genuinely short report is possible, and being wrong about that must
+    not stop someone reporting a live defect.
+    """
+    if msg_type not in EXPECTS_REPLY:
+        return []                       # ack/close/verify-result legitimately stand alone
+
+    text = (body or "").strip()
+    out: list[str] = []
+
+    if len(text) < MIN_OPENER_CHARS:
+        out.append(
+            f"body is {len(text)} characters; a thread-opener usually needs more than "
+            f"{MIN_OPENER_CHARS} to carry a reproduction and expected-vs-observed")
+
+    # Something that looks like a command or captured output: an indented block, a fenced
+    # block, a shell prompt, or an HTTP status. Its absence is the strongest single signal
+    # that the reader cannot reproduce this.
+    has_evidence = any(marker in text for marker in ("```", "\n    ", "\n\t", "$ ", "-> ")) \
+        or any(code in text for code in ("HTTP", "200", "401", "403", "429", "500", "503"))
+    if not has_evidence:
+        out.append("no reproduction or captured output found — paste the exact command and "
+                   "what it actually printed, not a paraphrase")
+
+    if "\n" not in text:
+        out.append("single line; state what you ran, what you got, and what you expected")
+
+    return out

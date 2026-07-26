@@ -23,6 +23,7 @@ Usage:
 """
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -33,6 +34,8 @@ import httpx
 from . import protocol as P
 from .registry import address_of, is_registered, platform_for_path, platform_of
 from .state import State
+
+logger = logging.getLogger(__name__)
 
 CONFIG_DIR = Path.home() / ".config" / "rodmena" / "agentmail"
 DEFAULT_BASE_URL = "https://mailserver.rodmena.co.uk"
@@ -92,6 +95,7 @@ class AgentMail:
         self._timeout = timeout
         self._state = State(platform, state_dir)
         self._quarantine: list[Quarantined] = []
+        self.opener_warnings: list[str] = []
 
     # -- construction --------------------------------------------------------------------
     @classmethod
@@ -312,8 +316,19 @@ class AgentMail:
     def send(self, to: str, subject: str, body: str, *, type: str = "report",
              severity: str | None = None, ref: str | None = None,
              thread_id: str | None = None) -> str:
-        """Start a new topic. Returns the thread id."""
+        """Start a new topic. Returns the thread id.
+
+        Sets `self.opener_warnings` to any advisory shortcomings in the body (see
+        `protocol.opener_shortcomings`). A thread-opener has to stand on its own — the reader
+        is a different agent in a different repo who cannot see your terminal — and a thin one
+        costs a full round trip between two poll-driven agents. These are heuristics, so they
+        NEVER block the send: being wrong about a short report must not stop someone
+        reporting a live defect.
+        """
         mtype = P.validate_type(type)
+        self.opener_warnings = P.opener_shortcomings(body, mtype)
+        for w in self.opener_warnings:
+            logger.warning("agentmail_thin_opener to=%s: %s", to, w)
         sev = P.validate_severity(severity)
         thread = thread_id or _new_thread_id()
 

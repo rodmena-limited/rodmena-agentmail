@@ -148,6 +148,15 @@ def main(argv: list[str] | None = None) -> int:
         thread = am.send(args.to, args.subject, _body(args.body), type=args.type,
                          severity=args.severity, ref=args.ref)
         print(f"sent to {args.to} (thread {thread})")
+        # Advisory only, and AFTER the send: the message is already away, so this is feedback
+        # for the next one rather than a gate on this one.
+        if am.opener_warnings:
+            print("\nthis opener may not stand on its own to a reader with no shared context:",
+                  file=sys.stderr)
+            for w in am.opener_warnings:
+                print(f"  - {w}", file=sys.stderr)
+            print("  see 'The first message in a thread carries the whole thread' in the "
+                  "agent-mail skill", file=sys.stderr)
         return 0
 
     if args.cmd == "reply":

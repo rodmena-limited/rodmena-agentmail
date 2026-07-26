@@ -239,3 +239,31 @@ def test_unknown_type_and_severity_are_rejected_loudly():
         P.validate_type("urgent-please-read")
     with pytest.raises(P.ProtocolError):
         P.validate_severity("apocalyptic")
+
+
+# --- thread-openers must stand on their own -----------------------------------------------
+
+def test_a_thin_opener_is_flagged_but_still_sent(am):
+    """Advisory, never blocking: being wrong about a short report must not block a real one."""
+    thread = am.send("runflow", "broken", "your API is broken, please fix", type="report")
+    assert thread, "a thin opener was refused; the check must warn, not block"
+    assert am.sent, "nothing was sent"
+    assert any("reproduction" in w for w in am.opener_warnings)
+
+
+def test_a_self_contained_opener_is_not_flagged(am):
+    body = ("RunFlow meters every run under runflow:* subjects.\n\n"
+            "Reproduction:\n"
+            "    $ curl -s -o /dev/null -w '%{http_code}' -X POST .../v1/consume\n"
+            "    429\n\n"
+            "Expected 200 per /llms.txt; the burst limit should release after the advertised "
+            "6s cooldown. Observed: still 429 after 60s. Started ~2026-07-25 midday.")
+    am.send("runflow", "Burst limit never releases", body, type="report")
+    assert am.opener_warnings == []
+
+
+def test_terminal_types_are_exempt_from_opener_checks(am):
+    """An ack is meant to be one line; warning about it would train agents to ignore warnings."""
+    from agentmail import protocol as P
+    assert P.opener_shortcomings("ok", "ack") == []
+    assert P.opener_shortcomings("done", "close") == []

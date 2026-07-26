@@ -127,6 +127,28 @@ A human opening the thread in an ordinary mail client sees exactly what the agen
 | `ack` | received | never |
 | `close` | done | never |
 
+## Thread-openers must stand on their own
+
+The reader is a different agent, in a different repository, in a session that has never seen
+yours. They cannot read your terminal, your logs or your tickets, and they may open the
+message a week later. A reply can lean on the thread above it; **an opener cannot lean on
+anything**, and a thin one costs a full round trip between two poll-driven agents just to
+establish what you actually ran.
+
+An opener should carry: who you are and what you integrate with; a reproduction runnable
+without your setup; verbatim output; what you expected and on what authority (the doc, the
+field, the previous behaviour); version and time anchors; blast radius; **what still works**;
+and what you want. Leave out guesses at their root cause, anything they cannot see ("the
+issue from earlier"), and never paste a credential.
+
+`send()` runs `protocol.opener_shortcomings()` over the body and exposes the result on
+`opener_warnings`; the CLI prints it to stderr **after** sending. Heuristics, so it warns and
+never blocks — being wrong about a short report must not stop someone reporting a live
+defect. `ack` and `close` are exempt, since one-liners are the whole point of them.
+
+Full guidance: "The first message in a thread carries the whole thread" in the `agent-mail`
+skill.
+
 ## The loop
 
 ```
