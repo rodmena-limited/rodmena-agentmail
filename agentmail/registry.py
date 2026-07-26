@@ -48,6 +48,7 @@ PLATFORMS: dict[str, tuple[str, str, str, str]] = {
     "datashard": (f"datashard@{MAIL_DOMAIN}", "Datashard", "~/develop/datashard",        "rodmena-limited/DataShard"),
     "supervice": (f"supervice@{MAIL_DOMAIN}", "Supervice", "~/develop/supervice",        "rodmena-limited/supervice"),
     "highway":   (f"highway@{MAIL_DOMAIN}",   "Highway",   "~/highway-stack/highway",    "rodmena-limited/highway"),
+    "sponsorsignal": (f"sponsorsignal@{MAIL_DOMAIN}", "SponsorSignal", "~/develop/SponsorSignal", "rodmena-limited/SponsorSignal"),
     # Not a platform repo: the identity a human operator uses to file against the bus itself.
     # Without it, a bus-level defect can only be reported by borrowing a platform's identity.
     "operator":  (f"operator@{MAIL_DOMAIN}",  "Operator",  "",                           ""),
