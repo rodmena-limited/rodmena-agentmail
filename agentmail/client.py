@@ -31,7 +31,7 @@ from typing import Any, Iterator
 import httpx
 
 from . import protocol as P
-from .registry import address_of, is_registered, platform_of
+from .registry import address_of, is_registered, platform_for_path, platform_of
 from .state import State
 
 CONFIG_DIR = Path.home() / ".config" / "rodmena" / "agentmail"
@@ -98,12 +98,18 @@ class AgentMail:
     def from_env(cls, platform: str | None = None, **kw: Any) -> "AgentMail":
         """Load this platform's credential from the environment or its 0600 config file.
 
-        Order: explicit argument, then AGENTMAIL_PLATFORM, then — only if exactly one
-        credential file exists — that one. Guessing when several are present would let an
-        agent silently send as the wrong platform, which is the one impersonation the bus
-        cannot detect (mail-api would faithfully stamp the From of whoever's key was used).
+        Order: explicit argument, then AGENTMAIL_PLATFORM, then the repository we are
+        standing in, then — only if exactly one credential file exists — that one.
+
+        The cwd rule is what makes onboarding a one-liner: an agent working in
+        ~/develop/TokenGate is the TokenGate agent. Guessing when several credentials are
+        present and none of the above resolves would let an agent silently send as the wrong
+        platform, which is the one impersonation the bus cannot detect — mail-api faithfully
+        stamps the From of whoever's key was used, so it would look perfectly authentic.
         """
-        platform = platform or os.environ.get("AGENTMAIL_PLATFORM")
+        platform = (platform
+                    or os.environ.get("AGENTMAIL_PLATFORM")
+                    or platform_for_path())
         key = os.environ.get("AGENTMAIL_API_KEY")
         base = os.environ.get("AGENTMAIL_BASE_URL", DEFAULT_BASE_URL)
 
@@ -150,10 +156,10 @@ class AgentMail:
     def inbox(self, limit: int = 50, auto_mark: bool = True) -> list[Message]:
         """New, authentic messages, oldest first.
 
-        A message is returned ONLY if `dkim == "pass"` and the sender is a registered
-        platform. Everything else goes to `quarantined()` — it is never handed to the agent,
-        because an agent that reads attacker-controlled text is an agent that can be
-        instructed by an attacker.
+        A message is returned only if it passes `_reject_reason` — a registered sender with
+        no failed verification verdict. Everything else goes to `quarantined()` and is never
+        handed to the agent, because an agent that reads attacker-controlled text is an agent
+        an attacker can instruct.
 
         `auto_mark` records each returned message as seen immediately. Duplicates are worse
         than a missed poll here: the sender will follow up on silence, whereas re-processing
@@ -265,6 +271,25 @@ class AgentMail:
             dmarc=row.get("dmarc"),
             raw={**row, **detail},
         )
+
+    def get(self, inbound_id: str) -> Message | None:
+        """Fetch one message by id, applying the same authenticity check as inbox().
+
+        `reply` needs this because inbox() marks messages seen, so a second process (or a
+        later CLI invocation) cannot get the object back from the seen-list. Re-fetching and
+        re-verifying is the correct answer anyway: the guard must apply on every path that
+        can hand a message to the agent, not only the polling one.
+        """
+        detail = self._request("GET", f"/api/v1/inbound/{inbound_id}") or {}
+        row = detail.get("inbound", detail)
+        if not row or not row.get("inbound_id"):
+            return None
+        reason = self._reject_reason(row)
+        if reason:
+            self._quarantine.append(Quarantined(
+                inbound_id, row.get("from_addr"), row.get("subject") or "", reason))
+            return None
+        return self._to_message(row, row)
 
     def quarantined(self) -> list[Quarantined]:
         """Messages rejected this session. Worth logging: a spike means someone is probing."""

@@ -29,13 +29,33 @@ am.send("runflow", "Burst limit never releases",
 
 ## Install
 
+**Not on PyPI, deliberately** — the package embeds a registry of internal service addresses
+and repo paths, so publishing it publicly is a decision, not a default.
+
 ```bash
 pip install -e ~/develop/rodmena-agentmail
+# or, from another machine:
+pip install git+ssh://git@github.com/rodmena-limited/rodmena-agentmail.git
 ```
 
-The client reads its credential from `AGENTMAIL_API_KEY` / `AGENTMAIL_PLATFORM`, or from
-`~/.config/rodmena/agentmail/<platform>.env` (mode 0600). Provisioning lives in
-`rodmena-mail-api/deploy/`.
+There is also a CLI on `PATH`, which is the normal way agents use it — it needs no import and
+infers the platform from the working directory:
+
+```bash
+cd ~/develop/TokenGate
+agentmail whoami                 # -> tokengate
+agentmail inbox                  # new authenticated messages (--json for machines)
+agentmail send runflow -s "Burst limit never releases" -b @report.md -t report -S high
+agentmail reply 01KYD... -b "Reproduced. Fixing." -t ack
+agentmail quarantine             # what was rejected, and why
+```
+
+A refused reply exits 4 and prints the reason. Credentials come from `AGENTMAIL_API_KEY` /
+`AGENTMAIL_PLATFORM` or `~/.config/rodmena/agentmail/<platform>.env` (mode 0600). Provisioning
+and onboarding: see [ONBOARDING.md](ONBOARDING.md).
+
+**Nothing polls in the background.** Agents have no listener, so mail is only seen when
+someone runs `agentmail inbox` — at session start and after finishing a piece of work.
 
 ## Why the guards are in the library, not the prompt
 

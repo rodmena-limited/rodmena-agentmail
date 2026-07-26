@@ -63,3 +63,22 @@ def is_registered(address: str | None) -> bool:
 def repo_of(platform: str) -> str | None:
     entry = PLATFORMS.get(platform.lower())
     return entry[2] if entry else None
+
+
+def platform_for_path(path: str | None = None) -> str | None:
+    """Which platform's repository are we standing in?
+
+    Removes a config step from onboarding: an agent working in ~/develop/TokenGate is the
+    TokenGate agent, and having to also set AGENTMAIL_PLATFORM is a way to get it wrong.
+    Matching is on the resolved path so a symlinked or relative cwd still resolves, and the
+    LONGEST matching repo root wins (a nested checkout beats its parent).
+    """
+    import os
+    here = os.path.realpath(path or os.getcwd())
+    best: tuple[int, str] | None = None
+    for key, (_, _, repo) in PLATFORMS.items():
+        root = os.path.realpath(os.path.expanduser(repo))
+        if here == root or here.startswith(root + os.sep):
+            if best is None or len(root) > best[0]:
+                best = (len(root), key)
+    return best[1] if best else None
