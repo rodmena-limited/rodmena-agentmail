@@ -25,12 +25,19 @@ REPLY_EXPECTED = ("report", "question", "fix-notice")
 
 def main() -> int:
     platform = sys.argv[1] if len(sys.argv) > 1 else "unknown"
+    # Stop mode: notify the DEVELOPER only, never inject context. A Stop hook that returns
+    # additionalContext can re-wake the model, which stops again, which fires the hook again
+    # -- so the safe shape is a visible one-liner and nothing else. The agent picks the mail
+    # up on its next turn, which is soon enough for "after finishing a piece of work".
+    stop_mode = "--stop" in sys.argv
     try:
         msgs = json.load(sys.stdin)
     except Exception:
         return 1
 
     if not msgs:
+        if stop_mode:
+            return 0            # nothing waiting: stay silent between turns
         # "No mail" is a result. Without it the agent cannot tell a working check from one
         # that silently did nothing — which is how the CLAUDE.md version of this rule failed.
         json.dump({
@@ -40,6 +47,13 @@ def main() -> int:
             },
             "suppressOutput": True,
         }, sys.stdout)
+        return 0
+
+    if stop_mode:
+        senders = ", ".join(sorted({str(m.get("sender")) for m in msgs}))
+        json.dump({"systemMessage":
+                   f"agent-mail: {len(msgs)} message(s) waiting for {platform} "
+                   f"(from {senders}) — run `agentmail inbox`"}, sys.stdout)
         return 0
 
     lines = []

@@ -75,11 +75,19 @@ Reading mail must not depend on anyone remembering to. Install the `SessionStart
 
 ```bash
 mkdir -p ~/.claude/hooks
-cp hooks/agentmail-inbox.sh hooks/agentmail_summary.py ~/.claude/hooks/
-chmod +x ~/.claude/hooks/agentmail-inbox.sh
+cp hooks/agentmail-inbox.sh hooks/agentmail-notify.sh hooks/agentmail_summary.py ~/.claude/hooks/
+chmod +x ~/.claude/hooks/agentmail-inbox.sh ~/.claude/hooks/agentmail-notify.sh
 ```
 
-Both files are required — the shell script gathers, `agentmail_summary.py` builds the JSON.
+Three files: `agentmail-inbox.sh` runs at **SessionStart** and puts waiting envelopes in front
+of the agent; `agentmail-notify.sh` runs at **Stop** and tells the developer when mail lands
+mid-turn; `agentmail_summary.py` builds the JSON for both.
+
+The Stop half exists because the standing rule is "poll at session start **and after finishing
+a piece of work**". SessionStart covered the first clause; the second stayed prose, and prose
+is what gets skipped — a reply arrived, work was reported finished, and nobody looked. It
+emits a `systemMessage` only and never `additionalContext`, because a Stop hook that injects
+context can re-wake the model, which stops again, which fires the hook again.
 
 then add to `~/.claude/settings.json` (merge — do not replace the file):
 
@@ -90,6 +98,11 @@ then add to `~/.claude/settings.json` (merge — do not replace the file):
                    "command": "$HOME/.claude/hooks/agentmail-inbox.sh",
                    "timeout": 40,
                    "statusMessage": "Checking agent-mail inbox" } ] }
+  ],
+  "Stop": [
+    { "hooks": [ { "type": "command",
+                   "command": "$HOME/.claude/hooks/agentmail-notify.sh",
+                   "timeout": 30 } ] }
   ]
 }
 ```
