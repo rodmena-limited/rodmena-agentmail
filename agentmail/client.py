@@ -153,17 +153,21 @@ class AgentMail:
         return r.json() if r.content else None
 
     # -- reading -------------------------------------------------------------------------
-    def inbox(self, limit: int = 50, auto_mark: bool = True) -> list[Message]:
-        """New, authentic messages, oldest first.
+    def inbox(self, limit: int = 50, mark_seen: bool = False) -> list[Message]:
+        """Unconsumed, authentic messages, oldest first.
 
         A message is returned only if it passes `_reject_reason` — a registered sender with
         no failed verification verdict. Everything else goes to `quarantined()` and is never
         handed to the agent, because an agent that reads attacker-controlled text is an agent
         an attacker can instruct.
 
-        `auto_mark` records each returned message as seen immediately. Duplicates are worse
-        than a missed poll here: the sender will follow up on silence, whereas re-processing
-        the same report each tick is how a loop starts.
+        AT-LEAST-ONCE. This used to mark every returned message seen immediately, which
+        acknowledged delivery before the work was durable anywhere: an agent whose session
+        died, was compacted, or was interrupted between the poll and acting on what it read
+        lost that message permanently. Delivery is now consumed only when the caller says so
+        — `done()`, or a successful `reply()`, which is proof of handling. A message is
+        therefore re-delivered until it is dealt with; the reply-once guard is what stops
+        that turning into duplicate answers.
         """
         listing = self._request("GET", f"/api/v1/inbound?limit={int(limit)}") or {}
         rows = listing.get("inbound", []) if isinstance(listing, dict) else listing
@@ -185,7 +189,7 @@ class AgentMail:
             msg = self._to_message(row, detail.get("inbound", detail))
             self._state.extend_chain(msg.thread_id, msg.message_id)
             out.append(msg)
-            if auto_mark:
+            if mark_seen:
                 self._state.mark_seen(inbound_id)
 
         self._state.save()
@@ -291,6 +295,15 @@ class AgentMail:
             return None
         return self._to_message(row, row)
 
+    def done(self, msg: "Message | str") -> None:
+        """Mark a message consumed so it stops being re-delivered.
+
+        Call this when the work it describes is durable — a ticket opened, a fix committed, a
+        reply sent. `reply()` calls it for you, since answering is proof of handling.
+        """
+        self._state.mark_seen(msg if isinstance(msg, str) else msg.inbound_id)
+        self._state.save()
+
     def quarantined(self) -> list[Quarantined]:
         """Messages rejected this session. Worth logging: a spike means someone is probing."""
         return list(self._quarantine)
@@ -365,6 +378,7 @@ class AgentMail:
                           severity=sev, ref=ref),
             headers)
         self._state.mark_replied(msg.message_id)
+        self._state.mark_seen(msg.inbound_id)      # answering IS consuming
         self._state.extend_chain(msg.thread_id, _message_id_for(track_id))
         self._state.save()
         return msg.thread_id

@@ -64,8 +64,8 @@ def main(argv: list[str] | None = None) -> int:
     p_in = sub.add_parser("inbox", help="new authenticated messages")
     p_in.add_argument("--json", action="store_true")
     p_in.add_argument("--limit", type=int, default=50)
-    p_in.add_argument("--peek", action="store_true",
-                      help="do not mark messages as seen (re-read them next time)")
+    p_in.add_argument("--consume", action="store_true",
+                      help="mark everything read as done in the same breath (at-most-once)")
 
     p_s = sub.add_parser("send", help="start a new thread")
     p_s.add_argument("to", choices=sorted(PLATFORMS))
@@ -82,13 +82,20 @@ def main(argv: list[str] | None = None) -> int:
     p_r.add_argument("-S", "--severity", default=None)
     p_r.add_argument("-r", "--ref", default=None)
 
+    p_show = sub.add_parser("show", help="re-read one message by id")
+    p_show.add_argument("inbound_id")
+    p_show.add_argument("--json", action="store_true")
+
+    p_done = sub.add_parser("done", help="mark a message consumed so it stops re-appearing")
+    p_done.add_argument("inbound_id", nargs="+")
+
     sub.add_parser("quarantine", help="messages rejected this session, and why")
 
     args = p.parse_args(argv)
 
     if args.cmd == "platforms":
-        for k, (addr, name, repo) in sorted(PLATFORMS.items()):
-            print(f"  {k:<11} {addr:<32} {name:<11} {repo}")
+        for k, (addr, name, repo, git) in sorted(PLATFORMS.items()):
+            print(f"  {k:<11} {addr:<32} {name:<11} {git or repo or '(operator identity)'}")
         return 0
 
     if args.cmd == "whoami" and not args.as_platform:
@@ -107,7 +114,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.cmd == "inbox":
-        msgs = am.inbox(limit=args.limit, auto_mark=not args.peek)
+        msgs = am.inbox(limit=args.limit, mark_seen=args.consume)
         _print_messages(msgs, args.json)
         q = am.quarantined()
         if q:
@@ -115,9 +122,24 @@ def main(argv: list[str] | None = None) -> int:
                   file=sys.stderr)
         return 0
 
+    if args.cmd == "show":
+        msg = am.get(args.inbound_id)
+        if msg is None:
+            print(f"error: {args.inbound_id} is not a readable, authentic message",
+                  file=sys.stderr)
+            return 3
+        _print_messages([msg], args.json)
+        return 0
+
+    if args.cmd == "done":
+        for i in args.inbound_id:
+            am.done(i)
+        print(f"marked {len(args.inbound_id)} message(s) done")
+        return 0
+
     if args.cmd == "quarantine":
         # Populated by a preceding inbox() in the same process, so do one first.
-        am.inbox(auto_mark=False)
+        am.inbox()
         for qq in am.quarantined():
             print(f"  {qq.inbound_id}  from={qq.from_addr}  {qq.subject[:40]!r}\n      {qq.reason}")
         return 0

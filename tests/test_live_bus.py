@@ -98,4 +98,7 @@ def main() -> int:
     return 1 if bad else 0
 
 
-sys.exit(main())
+# Guarded: pytest collects this file by name, and a module-level sys.exit() aborts the whole
+# run with INTERNALERROR before any real test executes.
+if __name__ == "__main__":
+    sys.exit(main())

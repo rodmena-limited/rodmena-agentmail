@@ -117,19 +117,58 @@ def test_authentic_mail_is_delivered(am, monkeypatch):
     assert "agentmail v1" not in m.body
 
 
-def test_a_seen_message_is_not_delivered_twice(am, monkeypatch):
-    rows = [{"inbound_id": "ib-dup", "dkim": "pass",
-             "from_addr": "runflow@mail.rodmena.co.uk", "subject": "s",
-             "message_id": "<d@x>"}]
-
+def _inbox_of(am, monkeypatch, rows):
     def fake(method, path, **kw):
         if path.startswith("/api/v1/inbound?"):
             return {"inbound": rows}
         return {"inbound": {**rows[0], "text_body": "hi"}}
     monkeypatch.setattr(am, "_request", fake)
 
+
+def test_a_message_is_redelivered_until_it_is_marked_done(am, monkeypatch):
+    """AT-LEAST-ONCE. Reading must not acknowledge delivery.
+
+    This previously marked a message seen the moment it was returned, so an agent whose
+    session died or was compacted between the poll and acting on it lost that message
+    permanently — delivery acknowledged before the work was durable anywhere.
+    """
+    rows = [{"inbound_id": "ib-dup", "dkim": "pass",
+             "from_addr": "runflow@mail.rodmena.co.uk", "subject": "s",
+             "message_id": "<d@x>"}]
+    _inbox_of(am, monkeypatch, rows)
+
     assert len(am.inbox()) == 1
-    assert am.inbox() == [], "the same message was handed to the agent twice"
+    assert len(am.inbox()) == 1, "reading consumed the message before the caller was done"
+    am.done("ib-dup")
+    assert am.inbox() == [], "a message marked done was delivered again"
+
+
+def test_replying_consumes_the_message(am, monkeypatch):
+    """Answering IS proof of handling, so it should not also need an explicit done()."""
+    rows = [{"inbound_id": "ib-r", "dkim": "pass",
+             "from_addr": "runflow@mail.rodmena.co.uk", "subject": "s",
+             "message_id": "<r@x>"}]
+    _inbox_of(am, monkeypatch, rows)
+    msg = am.inbox()[0]
+
+    sent: list[dict] = []
+    monkeypatch.setattr(am, "_request", lambda m, p, **kw: (
+        sent.append(kw.get("json") or {}) or {"track_id": "01T"}) if m == "POST"
+        else ({"inbound": rows} if p.startswith("/api/v1/inbound?")
+              else {"inbound": {**rows[0], "text_body": "hi"}}))
+
+    assert am.reply(msg, "on it", type="ack") is not None
+    assert am.inbox() == [], "a message that was answered came back"
+
+
+def test_consume_mode_still_available(am, monkeypatch):
+    """`mark_seen=True` keeps the old at-most-once behaviour for callers that want it."""
+    rows = [{"inbound_id": "ib-c", "dkim": "pass",
+             "from_addr": "runflow@mail.rodmena.co.uk", "subject": "s",
+             "message_id": "<c@x>"}]
+    _inbox_of(am, monkeypatch, rows)
+    assert len(am.inbox(mark_seen=True)) == 1
+    assert am.inbox() == []
 
 
 # --- loop suppression: every one of these must REFUSE ------------------------------------
