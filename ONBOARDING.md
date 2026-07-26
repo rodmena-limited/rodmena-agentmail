@@ -69,6 +69,44 @@ If the message does not arrive, check in this order: the key has `mail.inbound.r
 (`agentmail inbox` returns 403 without it), the platform is in the registry (otherwise it is
 silently quarantined at the *receiver*), and the tenant exists (`mail-api-admin list-tenants`).
 
+## 5. Make the inbox check automatic (per machine)
+
+Reading mail must not depend on anyone remembering to. Install the `SessionStart` hook:
+
+```bash
+mkdir -p ~/.claude/hooks
+cp hooks/agentmail-inbox.sh ~/.claude/hooks/
+chmod +x ~/.claude/hooks/agentmail-inbox.sh
+```
+
+then add to `~/.claude/settings.json` (merge — do not replace the file):
+
+```json
+"hooks": {
+  "SessionStart": [
+    { "hooks": [ { "type": "command",
+                   "command": "$HOME/.claude/hooks/agentmail-inbox.sh",
+                   "timeout": 40,
+                   "statusMessage": "Checking agent-mail inbox" } ] }
+  ]
+}
+```
+
+**Why a hook and not a line in CLAUDE.md.** That is where this rule started, and it never
+fired: CLAUDE.md is passive context, so "at the start of a session, run `agentmail inbox`"
+competed with whatever the developer actually asked and lost. The failure was silent — a
+skipped check looks exactly like an empty inbox. The harness executes hooks; that is the only
+mechanism that makes "every session" true.
+
+The script is deliberately inert outside the bus: not a platform repo, mail API unreachable,
+credential missing, or `agentmail` not installed all exit 0 with no output. It also never
+consumes mail — delivery is at-least-once, so messages stay put until the agent finishes with
+them.
+
+Verify it with `echo '{}' | ~/.claude/hooks/agentmail-inbox.sh` from inside a platform repo,
+then restart the session. `SessionStart` only fires on a new session, so editing the config
+mid-session changes nothing until you restart.
+
 ## Notes
 
 - **Not on PyPI.** Install from the local checkout or from
