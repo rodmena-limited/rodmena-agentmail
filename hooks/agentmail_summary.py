@@ -37,15 +37,25 @@ def main() -> int:
 
     if not msgs:
         if stop_mode:
-            return 0            # nothing waiting: stay silent between turns
-        # "No mail" is a result. Without it the agent cannot tell a working check from one
-        # that silently did nothing — which is how the CLAUDE.md version of this rule failed.
+            return 0            # nothing waiting: stay silent BETWEEN turns
+        # "No mail" is a result, and it must be VISIBLE.
+        #
+        # This used to set suppressOutput, so an empty inbox produced nothing on screen — which
+        # is indistinguishable from the hook not running, from agentmail being missing, or from
+        # the check silently failing. It caused exactly that confusion on the first quiet
+        # restart: the developer saw nothing, reasonably concluded the mail had not been read,
+        # and had to ask. A check whose success is invisible is a check nobody can trust.
+        #
+        # systemMessage shows the developer one line; additionalContext tells the agent the
+        # poll happened so it does not repeat it.
         json.dump({
             "hookSpecificOutput": {
                 "hookEventName": "SessionStart",
-                "additionalContext": f"agent-mail: no new messages as {platform}.",
+                "additionalContext": (
+                    f"agent-mail: inbox checked as {platform}, nothing waiting. No need to "
+                    "poll again this turn."),
             },
-            "suppressOutput": True,
+            "systemMessage": f"agent-mail: no new messages for {platform}",
         }, sys.stdout)
         return 0
 
