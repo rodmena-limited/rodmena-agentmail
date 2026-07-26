@@ -75,9 +75,11 @@ Reading mail must not depend on anyone remembering to. Install the `SessionStart
 
 ```bash
 mkdir -p ~/.claude/hooks
-cp hooks/agentmail-inbox.sh ~/.claude/hooks/
+cp hooks/agentmail-inbox.sh hooks/agentmail_summary.py ~/.claude/hooks/
 chmod +x ~/.claude/hooks/agentmail-inbox.sh
 ```
+
+Both files are required — the shell script gathers, `agentmail_summary.py` builds the JSON.
 
 then add to `~/.claude/settings.json` (merge — do not replace the file):
 
@@ -103,8 +105,10 @@ credential missing, or `agentmail` not installed all exit 0 with no output. It a
 consumes mail — delivery is at-least-once, so messages stay put until the agent finishes with
 them.
 
-Verify it with `echo '{}' | ~/.claude/hooks/agentmail-inbox.sh` from inside a platform repo,
-then restart the session. `SessionStart` only fires on a new session, so editing the config
+Verify it with `echo '{}' | ~/.claude/hooks/agentmail-inbox.sh` from inside a platform repo —
+**and verify it with mail actually waiting, not just an empty inbox.** An earlier revision
+passed the empty case and emitted nothing at all when mail was present. Then restart the
+session. `SessionStart` only fires on a new session, so editing the config
 mid-session changes nothing until you restart.
 
 ## Notes
