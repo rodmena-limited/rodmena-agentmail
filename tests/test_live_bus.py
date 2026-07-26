@@ -91,6 +91,16 @@ def main() -> int:
     check("forged impersonation was quarantined, not delivered", bool(forged),
           forged[0].reason if forged else "no forged probe seen this run (send one to re-test)")
 
+    # CLEAN UP AFTER OURSELVES. This sends REAL mail to a REAL inbox, and with at-least-once
+    # delivery nothing retires on its own — six runs of this script left seven unread messages
+    # sitting in runflow@, which read to the operator as "who sent RunFlow seven reports?".
+    # A test that pollutes production state is a test that gets switched off.
+    for client, label in ((rf, "runflow"), (tg, "tokengate")):
+        for m in client.inbox():
+            if SUBJECT in m.subject or P.reply_subject(SUBJECT) == m.subject:
+                client.done(m)
+    print("  cleaned up this run's probe messages")
+
     bad = [n for n, ok, _ in checks if not ok]
     print(f"\n{len(checks) - len(bad)}/{len(checks)} live checks pass")
     for n in bad:

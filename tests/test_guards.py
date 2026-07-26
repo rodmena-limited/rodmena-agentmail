@@ -25,7 +25,15 @@ def am(tmp_path, monkeypatch):
     client = AgentMail("tokengate", "test-key", state_dir=tmp_path)
     sent: list[dict] = []
 
+    acked: list[str] = []
+
     def fake(method, path, **kw):
+        # Distinguish SENDING mail from ACKING it. reply() now does both -- it posts the
+        # message and then acks the one it answered -- so counting every POST as "sent" made
+        # a single reply look like two messages.
+        if method == "POST" and path.endswith("/ack"):
+            acked.append(path.split("/")[-2])
+            return {"outcome": "consumed"}
         if method == "POST":
             sent.append(kw.get("json") or {})
             return {"track_id": f"01TRACK{len(sent):04d}"}
@@ -33,6 +41,7 @@ def am(tmp_path, monkeypatch):
 
     monkeypatch.setattr(client, "_request", fake)
     client.sent = sent          # type: ignore[attr-defined]
+    client.acked = acked        # type: ignore[attr-defined]
     return client
 
 
@@ -141,6 +150,13 @@ def test_a_message_is_redelivered_until_it_is_marked_done(am, monkeypatch):
     assert len(am.inbox()) == 1, "reading consumed the message before the caller was done"
     am.done("ib-dup")
     assert am.inbox() == [], "a message marked done was delivered again"
+
+
+def test_replying_acks_server_side(am):
+    """Consumption must reach the server, or another machine sees the message again."""
+    msg = _msg(inbound_id="ib-ack")
+    assert am.reply(msg, "on it", type="ack") is not None
+    assert am.acked == ["ib-ack"], "reply consumed locally but never told the server"
 
 
 def test_replying_consumes_the_message(am, monkeypatch):

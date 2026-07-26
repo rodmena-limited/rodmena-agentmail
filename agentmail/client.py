@@ -173,7 +173,12 @@ class AgentMail:
         therefore re-delivered until it is dealt with; the reply-once guard is what stops
         that turning into duplicate answers.
         """
-        listing = self._request("GET", f"/api/v1/inbound?limit={int(limit)}") or {}
+        # unconsumed=true asks the SERVER what is outstanding. The local seen-list is now a
+        # cache in front of that, not the record itself: it used to be the only record, so a
+        # second machine — or this one after losing the file — was handed the whole retention
+        # window as unread (R5-29 / mail-api #218).
+        listing = self._request(
+            "GET", f"/api/v1/inbound?limit={int(limit)}&unconsumed=true") or {}
         rows = listing.get("inbound", []) if isinstance(listing, dict) else listing
 
         out: list[Message] = []
@@ -300,12 +305,24 @@ class AgentMail:
         return self._to_message(row, row)
 
     def done(self, msg: "Message | str") -> None:
-        """Mark a message consumed so it stops being re-delivered.
+        """Mark a message consumed so it stops being re-delivered, on EVERY machine.
 
         Call this when the work it describes is durable — a ticket opened, a fix committed, a
         reply sent. `reply()` calls it for you, since answering is proof of handling.
+
+        The server ack is the authoritative record; the local file is a cache kept in step so
+        an unreachable mail-api degrades to the old single-machine behaviour rather than
+        re-delivering everything. A failed ack is logged, not raised: the caller has already
+        finished the work, and turning that into an exception would make a network blip look
+        like a processing failure.
         """
-        self._state.mark_seen(msg if isinstance(msg, str) else msg.inbound_id)
+        inbound_id = msg if isinstance(msg, str) else msg.inbound_id
+        try:
+            self._request("POST", f"/api/v1/inbound/{inbound_id}/ack")
+        except AgentMailError as e:
+            logger.warning("agentmail_ack_failed id=%s: %s — consumed locally only, so "
+                           "another machine may see this again", inbound_id, e)
+        self._state.mark_seen(inbound_id)
         self._state.save()
 
     def quarantined(self) -> list[Quarantined]:
@@ -393,7 +410,7 @@ class AgentMail:
                           severity=sev, ref=ref),
             headers)
         self._state.mark_replied(msg.message_id)
-        self._state.mark_seen(msg.inbound_id)      # answering IS consuming
+        self.done(msg)                             # answering IS consuming
         self._state.extend_chain(msg.thread_id, _message_id_for(track_id))
         self._state.save()
         return msg.thread_id
