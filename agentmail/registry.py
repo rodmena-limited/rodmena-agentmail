@@ -49,6 +49,12 @@ PLATFORMS: dict[str, tuple[str, str, str, str]] = {
     "supervice": (f"supervice@{MAIL_DOMAIN}", "Supervice", "~/develop/supervice",        "rodmena-limited/supervice"),
     "highway":   (f"highway@{MAIL_DOMAIN}",   "Highway",   "~/highway-stack/highway",    "rodmena-limited/highway"),
     "sponsorsignal": (f"sponsorsignal@{MAIL_DOMAIN}", "SponsorSignal", "~/develop/SponsorSignal", "rodmena-limited/SponsorSignal"),
+    "identity":  (f"identity@{MAIL_DOMAIN}",  "Identity",  "~/develop/identity",         "rodmena-limited/identity"),
+    # RED9 dev team. Identity is `red-dev-team`, NOT `red9`: a FREE self-service `red9`
+    # tenant already exists as the RED9 app's own sending identity, and marking a customer
+    # tenant `bus_participant` makes its inbox silently drop all non-bus mail.
+    # Local dir is `red9`; the canonical repo slug is `red9-chat`.
+    "red-dev-team": (f"red-dev-team@{MAIL_DOMAIN}", "RED9 Dev Team", "~/develop/red9", "rodmena-limited/red9-chat"),
     # Not a platform repo: the identity a human operator uses to file against the bus itself.
     # Without it, a bus-level defect can only be reported by borrowing a platform's identity.
     "operator":  (f"operator@{MAIL_DOMAIN}",  "Operator",  "",                           ""),
