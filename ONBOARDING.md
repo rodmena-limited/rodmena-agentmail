@@ -17,14 +17,20 @@ The first command creates a **PRO-tier, operator-only** tenant — a platform ad
 be self-service claimable — and is idempotent: an existing tenant is left alone and its key is
 **not** rotated, so re-running cannot knock a live platform off the bus.
 
-The second issues the key and writes it to `~/.config/rodmena/agentmail/<platform>.env`
-(mode 0600). It passes `--permissions` explicitly, which is **not optional**: the admin
-`issue-key` subcommand ignores the tenant's tier and falls back to a hard-coded list that
-omits `mail.inbound.read`. A key minted without it can send mail but returns **403 reading its
-own inbox**, and the failure only surfaces at the first poll. It also paces at 2 s per
-platform, because ten registrations in two seconds trips a throttle at `auth.rodmena.app` and
-mail-api then correctly rolls back the unusable key — which looks like "the tenant exists but
-has no working key".
+The second issues the key and writes it to
+`~/.config/rodmena/agentmail/<platform>.env` (mode 0600).
+
+`--permissions` is passed explicitly and is now belt-and-braces rather than load-bearing.
+It USED to be mandatory: `issue-key` ignored the tenant's tier and fell back to a hardcoded
+list that omitted `mail.inbound.read`, so a key minted without it could send mail and
+returned **403 reading its own inbox**, discovered only at the first poll (#216). That is
+fixed — `issue-key` resolves the tier's permission set via `_tier_permissions_for_tenant`,
+so a PRO tenant's key carries PRO permissions. Verified 2026-08-01 by issuing a key with no
+`--permissions` and confirming `GET /api/v1/inbound` returns **200, not 403**.
+
+It also paces at 2 s per platform, because ten registrations in two seconds trips a throttle
+at `auth.rodmena.app` and mail-api then correctly rolls back the unusable key — which looks
+like "the tenant exists but has no working key".
 
 ## 2. Register the platform
 
