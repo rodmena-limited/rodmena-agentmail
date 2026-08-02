@@ -25,9 +25,13 @@ from .registry import PLATFORMS, platform_for_path
 
 
 def _body(value: str) -> str:
-    """A body given as `@path` is read from that file — reports are usually long."""
+    """A body given as `@path` is read from that file — reports are usually long.
+    `@-` reads from stdin, the standard Unix convention."""
     if value.startswith("@"):
-        with open(value[1:], encoding="utf-8") as fh:
+        path = value[1:]
+        if path == "-":
+            return sys.stdin.read()
+        with open(path, encoding="utf-8") as fh:
             return fh.read()
     return value
 
@@ -50,6 +54,23 @@ def _print_messages(msgs, as_json: bool) -> None:
               f"subject: {m.subject}\ntype:    {m.type}"
               f"{'  severity: ' + m.severity if m.severity else ''}{flag}\n"
               f"id:      {m.inbound_id}\nthread:  {m.thread_id}\n{'-' * 72}\n{m.body}")
+
+
+def _print_sent(rows, as_json: bool) -> None:
+    if as_json:
+        print(json.dumps([{
+            "track_id": s.track_id, "to": s.to, "subject": s.subject,
+            "from": s.from_addr, "status": s.status, "created_at": s.created_at,
+            "type": s.email_type,
+        } for s in rows], indent=2))
+        return
+    if not rows:
+        print("no sent messages found")
+        return
+    for s in rows:
+        print(f"\n{'=' * 72}\ntrack_id: {s.track_id}\nto:       {', '.join(s.to)}\n"
+              f"subject:  {s.subject or ''}\nfrom:     {s.from_addr or ''}\n"
+              f"status:   {s.status}\ncreated:  {s.created_at or ''}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -88,6 +109,20 @@ def main(argv: list[str] | None = None) -> int:
 
     p_done = sub.add_parser("done", help="mark a message consumed so it stops re-appearing")
     p_done.add_argument("inbound_id", nargs="+")
+
+    p_thread = sub.add_parser("thread", help="list all messages in a thread, oldest first")
+    p_thread.add_argument("thread_id")
+    p_thread.add_argument("--json", action="store_true")
+    p_thread.add_argument("--limit", type=int, default=200)
+
+    p_sent = sub.add_parser(
+        "sent", help="what this platform has sent — the sent folder ('did I send X?')")
+    p_sent.add_argument("--json", action="store_true")
+    p_sent.add_argument("--limit", type=int, default=50)
+    p_sent.add_argument("--recipient", default=None, help="exact recipient address")
+    p_sent.add_argument("--since", default=None, help="ISO-8601 lower bound on send time")
+    p_sent.add_argument("--message-id", dest="message_id", default=None,
+                        help="message id (the track_id embedded in the Message-ID)")
 
     sub.add_parser("quarantine", help="messages rejected this session, and why")
 
@@ -129,6 +164,20 @@ def main(argv: list[str] | None = None) -> int:
                   file=sys.stderr)
             return 3
         _print_messages([msg], args.json)
+        return 0
+
+    if args.cmd == "thread":
+        msgs = am.thread(args.thread_id, limit=args.limit)
+        if not msgs:
+            print(f"no messages found for thread {args.thread_id}")
+            return 0
+        _print_messages(msgs, args.json)
+        return 0
+
+    if args.cmd == "sent":
+        rows = am.sent(limit=args.limit, recipient=args.recipient, since=args.since,
+                       message_id=args.message_id)
+        _print_sent(rows, args.json)
         return 0
 
     if args.cmd == "done":

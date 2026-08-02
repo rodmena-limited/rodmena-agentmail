@@ -28,6 +28,7 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterator
+from urllib.parse import quote
 
 import httpx
 
@@ -81,6 +82,18 @@ class Quarantined:
     from_addr: str | None
     subject: str
     reason: str
+
+
+@dataclass
+class Sent:
+    """One outbound message this platform sent — the sent-folder view (#257)."""
+    track_id: str
+    to: list[str]
+    subject: str | None
+    from_addr: str | None
+    status: str
+    created_at: str | None
+    email_type: str | None
 
 
 class AgentMail:
@@ -203,6 +216,68 @@ class AgentMail:
 
         self._state.save()
         return out
+
+    def thread(self, thread_id: str, limit: int = 200) -> list[Message]:
+        """All messages in a thread, oldest first.
+
+        Fetches inbound messages filtered by ``recipient_tag`` (the plus-addressing tag that
+        carries the thread id). Each message is verified for authenticity just like ``inbox()``;
+        anything that fails is quarantined and skipped.
+        """
+        listing = self._request(
+            "GET", f"/api/v1/inbound?recipient_tag={thread_id}&limit={int(limit)}&unconsumed=false"
+        ) or {}
+        rows = listing.get("inbound", []) if isinstance(listing, dict) else listing
+
+        out: list[Message] = []
+        for row in reversed(rows):                       # API is newest-first; return oldest-first
+            inbound_id = row.get("inbound_id")
+            if not inbound_id:
+                continue
+
+            reason = self._reject_reason(row)
+            if reason:
+                self._quarantine.append(Quarantined(
+                    inbound_id, row.get("from_addr"), row.get("subject") or "", reason))
+                continue
+
+            detail = self._request("GET", f"/api/v1/inbound/{inbound_id}") or {}
+            msg = self._to_message(row, detail.get("inbound", detail))
+            out.append(msg)
+
+        return out
+
+    def sent(self, limit: int = 50, recipient: str | None = None,
+             since: str | None = None, message_id: str | None = None) -> list["Sent"]:
+        """What this platform has SENT, from its own sent folder (mail-api #257).
+
+        The outbound mirror of inbox(): a durable, server-side record of every send — the
+        answer to 'did I send X?'. Metadata only (track_id, recipients, subject, sending
+        identity, status, timestamp); the API never returns bodies here, so the folder can
+        prove a send without re-reading its content.
+
+        A dispute like the ones that motivated #257 ('I sent it' / 'I never received it')
+        is resolvable from the product's own interface: both sides now have a server-side
+        record — inbox() on the receiving side, sent() on the sending side.
+        """
+        query = f"limit={int(limit)}"
+        if recipient:
+            query += f"&recipient={quote(recipient)}"
+        if since:
+            query += f"&since={quote(since)}"
+        if message_id:
+            query += f"&message_id={quote(message_id)}"
+        listing = self._request("GET", f"/api/v1/sent?{query}") or {}
+        rows = listing.get("sent", []) if isinstance(listing, dict) else listing
+        return [Sent(
+            track_id=row.get("track_id") or "",
+            to=list(row.get("to_addrs") or []),
+            subject=row.get("subject"),
+            from_addr=row.get("from_addr"),
+            status=row.get("status") or "",
+            created_at=row.get("created_at"),
+            email_type=row.get("email_type"),
+        ) for row in rows]
 
     #: Verification verdicts. An EXPLICIT failure is disqualifying; absence is not.
     _VERDICTS = ("dmarc", "dkim", "spf")
