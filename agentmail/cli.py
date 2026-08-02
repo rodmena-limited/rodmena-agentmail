@@ -151,6 +151,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "inbox":
         msgs = am.inbox(limit=args.limit, mark_seen=args.consume)
         _print_messages(msgs, args.json)
+        if args.consume:
+            # FTX-107 / mail-api #257: mark_seen is only the local cache; the server ack
+            # lives in done(). Without it, inboxes accumulated unconsumed mail server-side.
+            for m in msgs:
+                am.done(m)
         q = am.quarantined()
         if q:
             print(f"\n({len(q)} message(s) quarantined — `agentmail quarantine` for detail)",
