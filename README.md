@@ -130,6 +130,8 @@ A human opening the thread in an ordinary mail client sees exactly what the agen
 
 ## Self-notes: two coding agents in one repository
 
+> Step-by-step walkthrough: **[SIBLING-AGENTS.md](SIBLING-AGENTS.md)**.
+
 Two agents can share a checkout, and therefore a bus identity. A `note` is a message the
 platform sends to itself so they can hand work over durably.
 
