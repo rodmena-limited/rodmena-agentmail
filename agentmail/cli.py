@@ -206,6 +206,15 @@ def main(argv: list[str] | None = None) -> int:
             print(f"server holds    : {b['server_unconsumed']}")
             print(f"diverged        : {len(b['diverged'])}")
             print(f"pending acks    : {len(b['pending_acks'])}")
+            # #366: name the third category, so `server holds` reconciles with what this
+            # agent is shown instead of leaving an unexplained gap.
+            other = b.get("for_other_agent") or []
+            if other:
+                print(f"for other agents: {len(other)}  (notes addressed to a co-resident "
+                      f"agent; correctly outstanding, not a divergence)")
+                for o in other:
+                    print(f"    {o['inbound_id']}  -> agent '{o.get('to_agent')}'  "
+                          f"{o['subject'][:44]}")
             for d in b["diverged"]:
                 print(f"    {d['inbound_id']}  {d['received_at'] or '':<28} "
                       f"{(d['from'] or ''):<32} {d['subject'][:44]}")
