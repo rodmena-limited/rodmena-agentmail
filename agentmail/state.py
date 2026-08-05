@@ -31,9 +31,24 @@ _MAX_REPLIED = 5000
 
 
 class State:
-    def __init__(self, platform: str, state_dir: Path | None = None) -> None:
+    def __init__(self, platform: str, state_dir: Path | None = None,
+                 agent: str | None = None) -> None:
+        # PER-AGENT STATE. Two coding agents can share one repository, hence one platform
+        # identity, hence — before this — one state file. That is a correctness bug, not a
+        # cosmetic one: `seen` is what suppresses re-delivery, so whichever agent polled
+        # first marked a message seen and the second agent NEVER saw it. Mail addressed to
+        # one was silently swallowed by the other, and the symptom is an empty inbox, which
+        # looks identical to having no mail.
+        #
+        # Namespacing the file by agent gives each its own seen/replied sets. The cost is
+        # that shared bus mail is now delivered to BOTH agents, so both could answer a peer
+        # report; the server-side reply-once guard and `done()` are what bound that, and it
+        # is the safer failure — a duplicate ack is recoverable, a message delivered to
+        # nobody is not.
         self.platform = platform
-        self.path = (state_dir or DEFAULT_STATE_DIR) / f"{platform}.json"
+        self.agent = agent or None
+        stem = f"{platform}@{agent}" if agent else platform
+        self.path = (state_dir or DEFAULT_STATE_DIR) / f"{stem}.json"
         self._data: dict[str, Any] = {"seen": [], "replied": [], "threads": {}}
         self._load()
 

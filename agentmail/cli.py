@@ -42,6 +42,7 @@ def _print_messages(msgs, as_json: bool) -> None:
             "inbound_id": m.inbound_id, "from": m.from_addr, "sender": m.sender,
             "subject": m.subject, "type": m.type, "severity": m.severity,
             "thread": m.thread_id, "ref": m.ref, "received_at": m.received_at,
+            "agent": m.agent, "to_agent": m.to_agent, "is_note": m.is_note,
             "body": m.body,
         } for m in msgs], indent=2))
         return
@@ -50,7 +51,13 @@ def _print_messages(msgs, as_json: bool) -> None:
         return
     for m in msgs:
         flag = "  (reply expected)" if m.expects_reply else ""
-        print(f"\n{'=' * 72}\nfrom:    {m.sender} <{m.from_addr}>\n"
+        # For a note, the interesting sender is the co-resident AGENT, not the platform —
+        # the platform is always us, so printing only that would hide who actually wrote it.
+        who = f"{m.sender} <{m.from_addr}>"
+        if m.is_note:
+            who = (f"NOTE from agent '{m.agent or 'unnamed'}'"
+                   f" -> {'agent ' + repr(m.to_agent) if m.to_agent else 'anyone here'}")
+        print(f"\n{'=' * 72}\nfrom:    {who}\n"
               f"subject: {m.subject}\ntype:    {m.type}"
               f"{'  severity: ' + m.severity if m.severity else ''}{flag}\n"
               f"id:      {m.inbound_id}\nthread:  {m.thread_id}\n{'-' * 72}\n{m.body}")
@@ -77,6 +84,10 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="agentmail", description=__doc__.split("\n")[0])
     p.add_argument("--as", dest="as_platform", default=None,
                    help="act as this platform (default: inferred from the working directory)")
+    p.add_argument("--agent", default=None,
+                   help="this agent's name within the platform, when two coding agents share "
+                        "one repo (default: $AGENTMAIL_AGENT). Gives each its own seen-state "
+                        "and receives notes addressed to it")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("whoami", help="which platform this directory belongs to")
@@ -87,6 +98,18 @@ def main(argv: list[str] | None = None) -> int:
     p_in.add_argument("--limit", type=int, default=50)
     p_in.add_argument("--consume", action="store_true",
                       help="mark everything read as done in the same breath (at-most-once)")
+
+    p_note = sub.add_parser(
+        "note", help="leave a note for another coding agent working in THIS repo")
+    p_note.add_argument("-s", "--subject", required=True)
+    p_note.add_argument("-b", "--body", required=True, help="text, or @file")
+    p_note.add_argument("--to", dest="to_agent", default=None,
+                        help="the other agent's name; omit to leave it for whoever reads next")
+    p_note.add_argument("--ref", default=None)
+
+    p_notes = sub.add_parser("notes", help="notes addressed to this agent (does not consume)")
+    p_notes.add_argument("--json", action="store_true")
+    p_notes.add_argument("--limit", type=int, default=50)
 
     p_s = sub.add_parser("send", help="start a new thread")
     p_s.add_argument("to", choices=sorted(PLATFORMS))
@@ -139,13 +162,27 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if who else 1
 
     try:
-        am = AgentMail.from_env(args.as_platform)
+        am = AgentMail.from_env(args.as_platform, agent=args.agent)
     except AgentMailError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
 
     if args.cmd == "whoami":
-        print(f"{am.platform}  <{am.address}>")
+        # Print the agent name when there is one: with two agents in a repo, "which of us am
+        # I" is the question that decides whose notes and whose seen-state this process uses.
+        print(f"{am.platform}  <{am.address}>"
+              + (f"  agent={am.agent}" if am.agent else ""))
+        return 0
+
+    if args.cmd == "note":
+        thread = am.note(args.subject, _body(args.body),
+                         to_agent=args.to_agent, ref=args.ref)
+        target = f"agent '{args.to_agent}'" if args.to_agent else "whoever reads next"
+        print(f"note left for {target} (thread {thread})")
+        return 0
+
+    if args.cmd == "notes":
+        _print_messages(am.notes(limit=args.limit), args.json)
         return 0
 
     if args.cmd == "inbox":

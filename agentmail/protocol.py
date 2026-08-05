@@ -44,13 +44,41 @@ H_TYPE = "X-Rodmena-Type"
 H_SEVERITY = "X-Rodmena-Severity"
 H_REF = "X-Rodmena-Ref"
 H_AUTO = "Auto-Submitted"
+H_AGENT = "X-Rodmena-Agent"
+H_TO_AGENT = "X-Rodmena-To-Agent"
 
 FRONT_MATTER_OPEN = "--- agentmail v1 ---"
 FRONT_MATTER_CLOSE = "--- end agentmail ---"
 
 AUTO_SUBMITTED = "auto-generated"  # RFC 3834
 
-TYPES = ("report", "question", "fix-notice", "verify-result", "ack", "close")
+TYPES = ("report", "question", "fix-notice", "verify-result", "ack", "close", "note")
+
+# SELF-NOTES, AND WHY AGENT IDENTITY IS *NOT* IN THE PLUS-TAG.
+#
+# Two coding agents can share one repository, and therefore one bus identity: `whoami`
+# resolves from the git remote, so both are `mail-api`. A `note` lets them leave each other
+# durable, timestamped messages through the same bus everything else uses.
+#
+# The obvious design — address the other agent as `mail-api+bob@…` — DOES NOT WORK, and the
+# reason is worth stating so nobody re-derives it: **the plus-tag is already occupied by the
+# thread id** (`thread_address` below). Measured on the live system, a normal bus message
+# arrives with `recipient_tag: "thr-3220db32520b463f90c4"`. Putting an agent name there
+# would overwrite the thread id, because `Client._to_message` reads the tag as its most
+# trustworthy thread source. Stacking them (`+bob.thr-…`) would break `Client.thread()`,
+# which queries the API for an EXACT `recipient_tag` match.
+#
+# So the addressee rides in the front matter instead, alongside type and severity. That slot
+# is free, survives receipt (X- headers do not — see above), and is readable by a human.
+#
+# The security property is weaker than the bus's, and deliberately so: front matter is body
+# text, so an agent could forge `to-agent`. That is acceptable HERE and nowhere else — both
+# agents already share one inbox, one API key and one working copy, so there is no boundary
+# between them left to cross. `to-agent` is addressing, not authorisation. Never reuse it to
+# gate anything.
+
+#: A note addressed to nobody in particular: every agent on the platform sees it.
+BROADCAST_AGENT = "*"
 
 #: Replying to one of these is what turns a conversation into a loop.
 TERMINAL_TYPES = frozenset({"ack", "close"})
@@ -121,19 +149,60 @@ def may_reply_to(msg_type: str, depth: int) -> tuple[bool, str]:
 
 
 def encode_body(body: str, *, msg_type: str, thread_id: str,
-                severity: str | None = None, ref: str | None = None) -> str:
+                severity: str | None = None, ref: str | None = None,
+                agent: str | None = None, to_agent: str | None = None) -> str:
     """Prepend the front-matter block that carries metadata mail-api will not persist.
 
     Kept deliberately readable: a human opening this thread in a normal mail client should be
     able to see what the agents were saying to each other without decoding anything.
+
+    `agent` / `to_agent` name the sending and receiving agent WITHIN one platform, for
+    self-notes between two coding agents sharing a repository. See the note above TYPES for
+    why this is front matter and not a plus-tag.
     """
     lines = [FRONT_MATTER_OPEN, f"type: {msg_type}", f"thread: {thread_id}"]
     if severity:
         lines.append(f"severity: {severity}")
     if ref:
         lines.append(f"ref: {ref}")
+    if agent:
+        lines.append(f"agent: {sanitise_agent(agent)}")
+    if to_agent:
+        lines.append(f"to-agent: {sanitise_agent(to_agent)}")
     lines.append(FRONT_MATTER_CLOSE)
     return "\n".join(lines) + "\n\n" + (body or "")
+
+
+#: Agent names are used in a front-matter line and a state FILENAME, so they may not contain
+#: a path separator, a newline, or anything that would let one agent's name address another's
+#: state file. Narrow by construction rather than by escaping at each use site.
+_AGENT_SAFE = re.compile(r"[^a-z0-9._-]+")
+
+
+def sanitise_agent(name: str) -> str:
+    """Normalise an agent name to something safe in front matter and in a filename.
+
+    Returns "" for anything that sanitises to nothing, which callers treat as "unset" — an
+    unnamed agent is a broadcast, never a silent match against another agent's name.
+    """
+    n = _AGENT_SAFE.sub("-", (name or "").strip().lower()).strip("-._")
+    return "" if n in ("", ".", "..") else n[:40]
+
+
+def note_is_for(to_agent: str | None, me: str | None) -> bool:
+    """Should the agent called `me` be shown a note addressed to `to_agent`?
+
+    Unaddressed notes and explicit broadcasts go to everyone — including an agent that never
+    set a name, because the alternative is mail that is delivered to nobody and looks exactly
+    like mail that was never sent.
+    """
+    # BROADCAST_AGENT ('*') sanitises to "", so the empty check below is what actually
+    # implements broadcast; there is deliberately no separate '*' branch, because a branch
+    # that can never be reached is indistinguishable from one that works.
+    target = sanitise_agent(to_agent or "")
+    if not target:
+        return True
+    return target == sanitise_agent(me or "")
 
 
 def decode_body(raw: str) -> tuple[dict[str, str], str]:
