@@ -208,6 +208,11 @@ class AgentMail:
         # cache in front of that, not the record itself: it used to be the only record, so a
         # second machine — or this one after losing the file — was handed the whole retention
         # window as unread (R5-29 / mail-api #218).
+        # #358: reconcile before listing. An agent that polls at all repairs its own
+        # divergence, so a blip during one session does not leave the server holding a phantom
+        # backlog for the rest of the retention window.
+        self.retry_pending_acks()
+
         listing = self._request(
             "GET", f"/api/v1/inbound?limit={int(limit)}&unconsumed=true") or {}
         rows = listing.get("inbound", []) if isinstance(listing, dict) else listing
@@ -422,11 +427,47 @@ class AgentMail:
         inbound_id = msg if isinstance(msg, str) else msg.inbound_id
         try:
             self._request("POST", f"/api/v1/inbound/{inbound_id}/ack")
+            self._state.clear_pending_ack(inbound_id)
         except AgentMailError as e:
-            logger.warning("agentmail_ack_failed id=%s: %s — consumed locally only, so "
-                           "another machine may see this again", inbound_id, e)
+            # #358. Do NOT stop at a log line. This used to mark the message seen and move on,
+            # which turned a transient blip into a permanent, silent divergence: invisible to
+            # this agent forever, outstanding on the server forever, and `consumed_at` (added
+            # in #231 so an operator can answer "did anyone read this?") reporting never-read
+            # for a message that was read and acted on. Measured on the live bus before this
+            # fix: the client said 0 unconsumed while the server said 35.
+            #
+            # Still marked seen — the caller finished the work and must not be handed it twice
+            # — but recorded so the next poll retries the ack and the two sides reconcile.
+            logger.warning("agentmail_ack_failed id=%s: %s — queued for retry on the next "
+                           "poll; `pending_acks()` shows the backlog", inbound_id, e)
+            self._state.add_pending_ack(inbound_id)
         self._state.mark_seen(inbound_id)
         self._state.save()
+
+    def pending_acks(self) -> list[str]:
+        """Messages consumed locally whose server ack has not yet succeeded (#358).
+
+        Non-empty means this agent and the server disagree about what is outstanding. Exposed
+        rather than only logged, because a warning written to a logger nobody greps is not
+        observability — that is exactly how the original divergence went unnoticed.
+        """
+        return self._state.pending_acks()
+
+    def retry_pending_acks(self) -> int:
+        """Re-attempt every queued ack. Returns how many are still outstanding afterwards.
+
+        Called at the top of `inbox()`, so an agent that polls at all self-heals. An ack that
+        fails again stays queued (FR-ACK-4) rather than being dropped — dropping it would
+        recreate the exact silent loss this fix exists to remove.
+        """
+        for inbound_id in self._state.pending_acks():
+            try:
+                self._request("POST", f"/api/v1/inbound/{inbound_id}/ack")
+                self._state.clear_pending_ack(inbound_id)
+            except AgentMailError:
+                pass                       # keep it queued; the next poll tries again
+        self._state.save()
+        return len(self._state.pending_acks())
 
     def quarantined(self) -> list[Quarantined]:
         """Messages rejected this session. Worth logging: a spike means someone is probing."""
