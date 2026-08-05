@@ -262,10 +262,22 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.cmd == "done":
-        for i in args.inbound_id:
-            am.done(i)
-        print(f"marked {len(args.inbound_id)} message(s) done")
-        return 0
+        # #363: report what actually happened. This printed "marked N done" and exited 0 even
+        # when every server ack had failed — stating a completed fact for something merely
+        # deferred. Nothing is lost (the #358 queue drains on the next poll), but an agent
+        # reading "done" has been told the server consumed it, which is precisely the belief
+        # #358 was written to prevent.
+        consumed = [i for i in args.inbound_id if am.done(i)]
+        queued = [i for i in args.inbound_id if i not in consumed]
+        if consumed:
+            print(f"consumed {len(consumed)} message(s) server-side")
+        if queued:
+            print(f"QUEUED FOR RETRY, not yet consumed: {len(queued)} message(s) — the server "
+                  f"ack failed and will be retried on the next poll. "
+                  f"`agentmail backlog` shows the outstanding set.")
+        # Non-zero only when nothing got through, so a script cannot read total deferral as
+        # success. A partial success still exits 0: the queued ones are not lost.
+        return 1 if queued and not consumed else 0
 
     if args.cmd == "quarantine":
         # Populated by a preceding inbox() in the same process, so do one first.
