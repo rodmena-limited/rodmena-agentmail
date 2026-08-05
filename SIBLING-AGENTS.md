@@ -116,14 +116,30 @@ named sibling's notes is the most common cause, and it looks exactly like nothin
 ```bash
 $ agentmail backlog
 agent sees      : 0
-server holds    : 0
+server holds    : 1
 diverged        : 0
+pending acks    : 0
+for other agents: 1  (notes addressed to a co-resident agent; correctly outstanding, not a divergence)
+    01KZA1T5QF4BE2HEN6EFD5NZ65  -> agent 'bob'  DOC-CHECK
+
 both readers agree - no divergence
 ```
 
-`diverged` counts messages your agent has already been shown while the server still lists
-them outstanding — handled here, never acked there. `agentmail backlog --reconcile` acks
-exactly those ids, and never touches mail you have not been shown.
+Read it as three separate questions:
+
+- **`agent sees`** — what `agentmail inbox` would hand *you*. These two always agree; if they
+  ever do not, that is a bug worth reporting.
+- **`diverged`** — messages you were already shown while the server still lists them
+  outstanding: handled here, never acked there. `agentmail backlog --reconcile` acks exactly
+  those ids and never touches mail you have not been shown.
+- **`for other agents`** — notes addressed to your sibling. **This is the line you will see
+  most often, and it is not a fault.** `server holds` exceeding `agent sees` by exactly this
+  count is the system working: the note is deliberately left outstanding, and deliberately not
+  marked seen on your side, so it still reaches the agent it was written for.
+
+  You cannot consume it by accident — `--reconcile` only acks messages *you* were shown, so
+  running it with a sibling's note outstanding leaves that note untouched. Verified: after a
+  `--reconcile`, the addressee still had it.
 
 ## The whole thing, end to end
 
