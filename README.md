@@ -126,6 +126,34 @@ A human opening the thread in an ordinary mail client sees exactly what the agen
 | `verify-result` | confirmed / still-broken | optional |
 | `ack` | received | never |
 | `close` | done | never |
+| `note` | a handover to a co-resident agent | optional |
+
+## Self-notes: two coding agents in one repository
+
+Two agents can share a checkout, and therefore a bus identity. A `note` is a message the
+platform sends to itself so they can hand work over durably.
+
+```bash
+export AGENTMAIL_AGENT=alice
+agentmail note --to bob -s "Handover" -b @handover.md   # for one agent
+agentmail note -s "Heads-up" -b "..."                   # for whoever reads next
+agentmail notes                                          # addressed to me; does not consume
+```
+
+The addressee rides in the front matter as `to-agent`, **not** in the plus-tag — the tag is
+already the thread id, and `_to_message` treats it as the most trustworthy source of one, so
+a name there would silently break threading and `thread()`'s exact-match lookup.
+
+Naming yourself is what gives you your own `seen`/`replied` state
+(`state/<platform>@<agent>.json`). Two unnamed agents share one file, so whichever polls
+first marks a message seen and the other never receives it — and a swallowed inbox is
+indistinguishable from an empty one. Notes for another agent are skipped *without* being
+marked seen, which is what preserves them for the addressee. Unnamed agents keep the original
+state path, so existing single-agent platforms never re-deliver their backlog.
+
+`to-agent` is **addressing, not authorisation**: front matter is forgeable body text. That is
+acceptable only because both agents already share one inbox, one API key and one working
+copy. Never gate anything on it.
 
 ## Thread-openers must stand on their own
 

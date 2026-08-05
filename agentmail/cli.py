@@ -18,8 +18,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 
+from . import protocol as P
 from .client import AgentMail, AgentMailError
 from .registry import PLATFORMS, platform_for_path
 
@@ -157,8 +159,14 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.cmd == "whoami" and not args.as_platform:
+        # This path deliberately answers without loading a credential, so it still works in a
+        # repo whose key is not installed. It must still report the agent name: "which of us
+        # am I" is what decides whose notes and whose seen-state this process uses, and it is
+        # the answer an agent checks BEFORE it trusts an empty inbox.
         who = platform_for_path()
-        print(who or "not inside a registered platform repository")
+        agent = P.sanitise_agent(args.agent or os.environ.get("AGENTMAIL_AGENT", ""))
+        print((who or "not inside a registered platform repository")
+              + (f"  agent={agent}" if who and agent else ""))
         return 0 if who else 1
 
     try:
