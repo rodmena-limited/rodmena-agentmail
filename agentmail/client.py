@@ -28,6 +28,7 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterator
+from urllib.parse import quote
 
 import httpx
 
@@ -67,11 +68,25 @@ class Message:
     dkim: str
     spf: str | None = None
     dmarc: str | None = None
+    #: Self-note addressing WITHIN one platform. `agent` is who wrote it, `to_agent` who it
+    #: is for (None = everyone on this platform). Both are None for ordinary bus traffic.
+    agent: str | None = None
+    to_agent: str | None = None
     raw: dict[str, Any] = field(default_factory=dict)
 
     @property
     def expects_reply(self) -> bool:
         return self.type in P.EXPECTS_REPLY
+
+    @property
+    def is_note(self) -> bool:
+        """A note between agents co-resident on one platform, rather than bus traffic.
+
+        Keyed on the TYPE alone. Comparing sender to recipient would be a tautology — the
+        client only ever reads its own inbox, and `sender` is derived from `from_addr` — so
+        it would report True for every message and prove nothing.
+        """
+        return self.type == "note"
 
 
 @dataclass
@@ -83,17 +98,33 @@ class Quarantined:
     reason: str
 
 
+@dataclass
+class Sent:
+    """One outbound message this platform sent — the sent-folder view (#257)."""
+    track_id: str
+    to: list[str]
+    subject: str | None
+    from_addr: str | None
+    status: str
+    created_at: str | None
+    email_type: str | None
+
+
 class AgentMail:
     def __init__(self, platform: str, api_key: str, *,
                  base_url: str = DEFAULT_BASE_URL,
                  state_dir: Path | None = None,
+                 agent: str | None = None,
                  timeout: float = 20.0) -> None:
         self.platform = platform
         self.address = address_of(platform)
+        # This agent's name WITHIN the platform. Only meaningful when two agents share one
+        # repository; None means "the only agent here", which sees everything.
+        self.agent = P.sanitise_agent(agent or os.environ.get("AGENTMAIL_AGENT", "")) or None
         self._key = api_key
         self._base = base_url.rstrip("/")
         self._timeout = timeout
-        self._state = State(platform, state_dir)
+        self._state = State(platform, state_dir, agent=self.agent)
         self._quarantine: list[Quarantined] = []
         self.opener_warnings: list[str] = []
 
@@ -196,6 +227,14 @@ class AgentMail:
 
             detail = self._request("GET", f"/api/v1/inbound/{inbound_id}") or {}
             msg = self._to_message(row, detail.get("inbound", detail))
+
+            # A note addressed to a DIFFERENT co-resident agent is not ours to read. Skip it
+            # WITHOUT marking it seen: our seen-set is per-agent, so leaving it untouched is
+            # what lets the agent it was addressed to still receive it. Marking it here is
+            # exactly the bug per-agent state exists to prevent.
+            if not P.note_is_for(msg.to_agent, self.agent):
+                continue
+
             self._state.extend_chain(msg.thread_id, msg.message_id)
             out.append(msg)
             if mark_seen:
@@ -203,6 +242,68 @@ class AgentMail:
 
         self._state.save()
         return out
+
+    def thread(self, thread_id: str, limit: int = 200) -> list[Message]:
+        """All messages in a thread, oldest first.
+
+        Fetches inbound messages filtered by ``recipient_tag`` (the plus-addressing tag that
+        carries the thread id). Each message is verified for authenticity just like ``inbox()``;
+        anything that fails is quarantined and skipped.
+        """
+        listing = self._request(
+            "GET", f"/api/v1/inbound?recipient_tag={thread_id}&limit={int(limit)}&unconsumed=false"
+        ) or {}
+        rows = listing.get("inbound", []) if isinstance(listing, dict) else listing
+
+        out: list[Message] = []
+        for row in reversed(rows):                       # API is newest-first; return oldest-first
+            inbound_id = row.get("inbound_id")
+            if not inbound_id:
+                continue
+
+            reason = self._reject_reason(row)
+            if reason:
+                self._quarantine.append(Quarantined(
+                    inbound_id, row.get("from_addr"), row.get("subject") or "", reason))
+                continue
+
+            detail = self._request("GET", f"/api/v1/inbound/{inbound_id}") or {}
+            msg = self._to_message(row, detail.get("inbound", detail))
+            out.append(msg)
+
+        return out
+
+    def sent(self, limit: int = 50, recipient: str | None = None,
+             since: str | None = None, message_id: str | None = None) -> list["Sent"]:
+        """What this platform has SENT, from its own sent folder (mail-api #257).
+
+        The outbound mirror of inbox(): a durable, server-side record of every send — the
+        answer to 'did I send X?'. Metadata only (track_id, recipients, subject, sending
+        identity, status, timestamp); the API never returns bodies here, so the folder can
+        prove a send without re-reading its content.
+
+        A dispute like the ones that motivated #257 ('I sent it' / 'I never received it')
+        is resolvable from the product's own interface: both sides now have a server-side
+        record — inbox() on the receiving side, sent() on the sending side.
+        """
+        query = f"limit={int(limit)}"
+        if recipient:
+            query += f"&recipient={quote(recipient)}"
+        if since:
+            query += f"&since={quote(since)}"
+        if message_id:
+            query += f"&message_id={quote(message_id)}"
+        listing = self._request("GET", f"/api/v1/sent?{query}") or {}
+        rows = listing.get("sent", []) if isinstance(listing, dict) else listing
+        return [Sent(
+            track_id=row.get("track_id") or "",
+            to=list(row.get("to_addrs") or []),
+            subject=row.get("subject"),
+            from_addr=row.get("from_addr"),
+            status=row.get("status") or "",
+            created_at=row.get("created_at"),
+            email_type=row.get("email_type"),
+        ) for row in rows]
 
     #: Verification verdicts. An EXPLICIT failure is disqualifying; absence is not.
     _VERDICTS = ("dmarc", "dkim", "spf")
@@ -282,6 +383,8 @@ class AgentMail:
             dkim=(row.get("dkim") or ""),
             spf=row.get("spf"),
             dmarc=row.get("dmarc"),
+            agent=(P.sanitise_agent(meta.get("agent", "")) or None),
+            to_agent=(P.sanitise_agent(meta.get("to-agent", "")) or None),
             raw={**row, **detail},
         )
 
@@ -330,9 +433,36 @@ class AgentMail:
         return list(self._quarantine)
 
     # -- writing -------------------------------------------------------------------------
+    def note(self, subject: str, body: str, *, to_agent: str | None = None,
+             ref: str | None = None, thread_id: str | None = None) -> str:
+        """Leave a note for another coding agent working in THIS repository.
+
+        Two agents in one checkout share a bus identity, so a note is simply a message this
+        platform sends to itself: it goes out through mail-api and arrives in this same
+        inbox, where `inbox()` hands it to the addressed agent. Verified end to end on the
+        live system — a self-addressed message is delivered and readable, it is not
+        short-circuited or suppressed as a loop.
+
+        `to_agent` is the other agent's name (`AGENTMAIL_AGENT` on their side). Omit it to
+        leave a note for whoever reads next, which is the useful default for a handover.
+
+        WHAT THIS IS FOR: durable handovers that must outlive a session — what you changed,
+        what you were part-way through, what you deliberately did not do. It is NOT a chat
+        channel. Delivery goes out over SMTP and back in through the inbound pipe, so it
+        takes seconds, not milliseconds, and every note is permanently retained and readable
+        by a human. If the two agents can simply share a file in the working copy, do that
+        instead; use a note when you want it timestamped, attributable and durable.
+        """
+        return self.send(self.platform, subject, body, type="note",
+                         ref=ref, thread_id=thread_id, to_agent=to_agent)
+
+    def notes(self, limit: int = 50) -> list["Message"]:
+        """Unconsumed notes addressed to this agent, oldest first. A view over `inbox()`."""
+        return [m for m in self.inbox(limit=limit, mark_seen=False) if m.is_note]
+
     def send(self, to: str, subject: str, body: str, *, type: str = "report",
              severity: str | None = None, ref: str | None = None,
-             thread_id: str | None = None) -> str:
+             thread_id: str | None = None, to_agent: str | None = None) -> str:
         """Start a new topic. Returns the thread id.
 
         Sets `self.opener_warnings` to any advisory shortcomings in the body (see
@@ -363,7 +493,8 @@ class AgentMail:
         # the body. The X- headers go too, but only a human's mail client will ever see them.
         track_id = self._post(
             P.thread_address(address_of(to), thread), subject,
-            P.encode_body(body, msg_type=mtype, thread_id=thread, severity=sev, ref=ref),
+            P.encode_body(body, msg_type=mtype, thread_id=thread, severity=sev, ref=ref,
+                          agent=self.agent, to_agent=to_agent),
             headers)
         self._state.extend_chain(thread, _message_id_for(track_id))
         self._state.save()
@@ -407,7 +538,10 @@ class AgentMail:
             P.thread_address(msg.from_addr, msg.thread_id),
             P.reply_subject(msg.subject),
             P.encode_body(body, msg_type=mtype, thread_id=msg.thread_id,
-                          severity=sev, ref=ref),
+                          severity=sev, ref=ref, agent=self.agent,
+                          # A reply to a note goes back to whoever wrote it, so the thread
+                          # stays between those two agents instead of leaking to the platform.
+                          to_agent=(msg.agent if msg.is_note else None)),
             headers)
         self._state.mark_replied(msg.message_id)
         self.done(msg)                             # answering IS consuming

@@ -44,17 +44,28 @@ PLATFORMS: dict[str, tuple[str, str, str, str]] = {
     "tokengate": (f"tokengate@{MAIL_DOMAIN}", "TokenGate", "~/develop/TokenGate",        "rodmena-limited/TokenGate"),
     "mail-api":  (f"mail-api@{MAIL_DOMAIN}",  "Mail API",  "~/develop/rodmena-mail-api", "rodmena-limited/rodmena-mail-api"),
     "stabilize": (f"stabilize@{MAIL_DOMAIN}", "Stabilize", "~/develop/stabilize",        "rodmena-limited/stabilize"),
+    "bulkman":   (f"bulkman@{MAIL_DOMAIN}",   "Bulkman",   "~/develop/bulkman",         "rodmena-limited/bulkman"),
     "migretti":  (f"migretti@{MAIL_DOMAIN}",  "Migretti",  "~/develop/migretti",         "rodmena-limited/migretti"),
     "datashard": (f"datashard@{MAIL_DOMAIN}", "Datashard", "~/develop/datashard",        "rodmena-limited/DataShard"),
     "supervice": (f"supervice@{MAIL_DOMAIN}", "Supervice", "~/develop/supervice",        "rodmena-limited/supervice"),
     "highway":   (f"highway@{MAIL_DOMAIN}",   "Highway",   "~/highway-stack/highway",    "rodmena-limited/highway"),
     "sponsorsignal": (f"sponsorsignal@{MAIL_DOMAIN}", "SponsorSignal", "~/develop/SponsorSignal", "rodmena-limited/SponsorSignal"),
     "identity":  (f"identity@{MAIL_DOMAIN}",  "Identity",  "~/develop/identity",         "rodmena-limited/identity"),
+    # folks.solutions (#353). Bus identity is `folks`, NOT `folks.solutions`: a client
+    # key must match ^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$ and dots are illegal. The local
+    # directory keeps the dotted name.
+    "folks":     (f"folks@{MAIL_DOMAIN}",     "Folks Solutions", "~/develop/folks.solutions", "rodmena-limited/folks.solutions"),
     # RED9 dev team. Identity is `red-dev-team`, NOT `red9`: a FREE self-service `red9`
     # tenant already exists as the RED9 app's own sending identity, and marking a customer
     # tenant `bus_participant` makes its inbox silently drop all non-bus mail.
     # Local dir is `red9`; the canonical repo slug is `red9-chat`.
     "red-dev-team": (f"red-dev-team@{MAIL_DOMAIN}", "RED9 Dev Team", "~/develop/red9", "rodmena-limited/red9-chat"),
+    # #355. Bus identity is `baseframe`, one lower-case word: the checkout is
+    # ~/develop/BaseFrame but a client key must match ^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$.
+    # platform_for_path resolves both of these by GIT REMOTE before it ever looks at the
+    # directory name, so the mixed-case path costs nothing.
+    "ledger":    (f"ledger@{MAIL_DOMAIN}",    "Ledger",    "~/develop/ledger",    "rodmena-limited/ledger"),
+    "baseframe": (f"baseframe@{MAIL_DOMAIN}", "BaseFrame", "~/develop/BaseFrame", "rodmena-limited/BaseFrame"),
     # Not a platform repo: the identity a human operator uses to file against the bus itself.
     # Without it, a bus-level defect can only be reported by borrowing a platform's identity.
     "operator":  (f"operator@{MAIL_DOMAIN}",  "Operator",  "",                           ""),

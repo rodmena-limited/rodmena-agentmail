@@ -40,7 +40,7 @@ def am(tmp_path, monkeypatch):
         return {}
 
     monkeypatch.setattr(client, "_request", fake)
-    client.sent = sent          # type: ignore[attr-defined]
+    client.posted = sent          # type: ignore[attr-defined]
     client.acked = acked        # type: ignore[attr-defined]
     return client
 
@@ -192,14 +192,14 @@ def test_consume_mode_still_available(am, monkeypatch):
 @pytest.mark.parametrize("terminal", ["ack", "close"])
 def test_replying_to_a_terminal_type_is_refused(am, terminal):
     assert am.reply(_msg(type=terminal), "thanks!") is None
-    assert am.sent == [], "a terminal-typed message was answered"
+    assert am.posted == [], "a terminal-typed message was answered"
     assert terminal in am.why_refused(_msg(type=terminal))
 
 
 def test_a_message_is_only_ever_replied_to_once(am):
     assert am.reply(_msg(), "first", type="ack") is not None
     assert am.reply(_msg(), "second", type="ack") is None
-    assert len(am.sent) == 1
+    assert len(am.posted) == 1
 
 
 def test_reply_is_refused_past_the_depth_cap(am):
@@ -212,14 +212,14 @@ def test_reply_is_refused_past_the_depth_cap(am):
 
 def test_every_outgoing_message_is_marked_auto_submitted(am):
     am.send("runflow", "Subject", "Body", type="report")
-    assert am.sent[0]["headers"][P.H_AUTO] == P.AUTO_SUBMITTED
+    assert am.posted[0]["headers"][P.H_AUTO] == P.AUTO_SUBMITTED
 
 
 # --- threading ---------------------------------------------------------------------------
 
 def test_reply_carries_in_reply_to_and_thread_routing(am):
     am.reply(_msg(), "on it", type="ack")
-    sent = am.sent[0]
+    sent = am.posted[0]
     assert sent["headers"]["In-Reply-To"] == "<m1@mail.rodmena.co.uk>"
     assert sent["to"] == ["runflow+thr-1@mail.rodmena.co.uk"]
     assert sent["subject"] == "Re: Quota check"
@@ -263,7 +263,7 @@ def test_a_thin_opener_is_flagged_but_still_sent(am):
     """Advisory, never blocking: being wrong about a short report must not block a real one."""
     thread = am.send("runflow", "broken", "your API is broken, please fix", type="report")
     assert thread, "a thin opener was refused; the check must warn, not block"
-    assert am.sent, "nothing was sent"
+    assert am.posted, "nothing was sent"
     assert any("reproduction" in w for w in am.opener_warnings)
 
 
@@ -283,3 +283,132 @@ def test_terminal_types_are_exempt_from_opener_checks(am):
     from agentmail import protocol as P
     assert P.opener_shortcomings("ok", "ack") == []
     assert P.opener_shortcomings("done", "close") == []
+
+
+# --- thread history -----------------------------------------------------------------------
+
+def test_thread_returns_messages_filtered_by_tag(am, monkeypatch):
+    """`am.thread(thr-id)` fetches inbound messages filtered by recipient_tag."""
+    thread_id = "thr-test"
+    rows = [
+        # API returns newest-first; second message is newer than first
+        {"inbound_id": "ib-t2", "recipient_tag": thread_id, "from_addr": "runflow@mail.rodmena.co.uk",
+         "subject": "Second", "message_id": "<m2@x>", "dkim": "pass"},
+        {"inbound_id": "ib-t1", "recipient_tag": thread_id, "from_addr": "runflow@mail.rodmena.co.uk",
+         "subject": "First",  "message_id": "<m1@x>", "dkim": "pass"},
+        {"inbound_id": "ib-other", "recipient_tag": "thr-other", "from_addr": "runflow@mail.rodmena.co.uk",
+         "subject": "Other",  "message_id": "<m3@x>", "dkim": "pass"},
+    ]
+
+    calls = []
+    def fake(method, path, **kw):
+        calls.append(path)
+        if "recipient_tag=" in path:
+            tag = path.split("recipient_tag=")[1].split("&")[0]
+            matching = [r for r in rows if r.get("recipient_tag") == tag]
+            return {"inbound": matching}
+        return {"inbound": {**rows[0], "text_body": f"body-{path.split('/')[-1]}"}}
+    monkeypatch.setattr(am, "_request", fake)
+
+    got = am.thread(thread_id)
+    assert len(got) == 2, "only messages matching the thread tag should be returned"
+    assert got[0].subject == "First", "messages should be oldest-first"
+    assert got[1].subject == "Second"
+    assert all(m.thread_id == thread_id for m in got)
+    assert all(m.sender == "runflow" for m in got)
+
+
+def test_thread_with_quarantined_message(am, monkeypatch):
+    """A message that fails verification in thread() is quarantined, not returned."""
+    rows = [
+        {"inbound_id": "ib-q", "recipient_tag": "thr-q", "from_addr": "unregistered@evil.example",
+         "subject": "Bad", "message_id": "<b@x>"},
+    ]
+
+    def fake(method, path, **kw):
+        if "recipient_tag=" in path:
+            return {"inbound": rows}
+        return {"inbound": {**rows[0], "text_body": "body"}}
+    monkeypatch.setattr(am, "_request", fake)
+
+    got = am.thread("thr-q")
+    assert got == [], "quarantined messages must not appear in thread output"
+    assert len(am.quarantined()) == 1
+
+
+def test_thread_with_no_messages(am, monkeypatch):
+    """An empty thread returns an empty list, not an error."""
+    def fake(method, path, **kw):
+        return {"inbound": []}
+    monkeypatch.setattr(am, "_request", fake)
+
+    assert am.thread("thr-nonexistent") == []
+
+
+# --- sent folder (#257): the outbound mirror of inbox() ---------------------------------
+
+def test_sent_lists_outbound_sends(am, monkeypatch):
+    """sent() must return the server's record of what THIS platform sent, parsed into
+    the fields the sent folder promises (track_id, recipients, subject, identity,
+    status, timestamp) — the answer to 'did I send X?'."""
+    rows = [
+        {"track_id": "01S1", "to_addrs": ["runflow@mail.rodmena.co.uk"],
+         "subject": "Quota check", "from_addr": "tokengate@mail.rodmena.co.uk",
+         "status": "sent", "created_at": "2026-08-02T00:00:00Z", "email_type": "report"},
+        {"track_id": "01S2", "to_addrs": ["futex@mail.rodmena.co.uk"],
+         "subject": "Usage numbers", "from_addr": "tokengate@mail.rodmena.co.uk",
+         "status": "sent", "created_at": "2026-08-02T00:10:00Z", "email_type": "report"},
+    ]
+    calls: list[str] = []
+
+    def fake(method, path, **kw):
+        calls.append(path)
+        return {"sent": rows}
+    monkeypatch.setattr(am, "_request", fake)
+
+    got = am.sent()
+    assert [s.track_id for s in got] == ["01S1", "01S2"]
+    assert got[0].to == ["runflow@mail.rodmena.co.uk"]
+    assert got[0].subject == "Quota check"
+    assert got[0].from_addr == "tokengate@mail.rodmena.co.uk"
+    assert got[0].status == "sent"
+    assert got[0].created_at == "2026-08-02T00:00:00Z"
+    assert calls == ["/api/v1/sent?limit=50"], calls
+
+
+def test_sent_passes_filters_through(am, monkeypatch):
+    """recipient / since / message_id must reach the server as query parameters —
+    a filter the client drops is a filter that silently answers the wrong question."""
+    calls: list[str] = []
+
+    def fake(method, path, **kw):
+        calls.append(path)
+        return {"sent": []}
+    monkeypatch.setattr(am, "_request", fake)
+
+    am.sent(recipient="runflow@mail.rodmena.co.uk",
+            since="2026-08-01T00:00:00Z",
+            message_id="01S1")
+    assert calls == ["/api/v1/sent?limit=50"
+                     "&recipient=runflow%40mail.rodmena.co.uk"
+                     "&since=2026-08-01T00%3A00%3A00Z"
+                     "&message_id=01S1"], calls
+
+
+def test_sent_never_exposes_a_body(am, monkeypatch):
+    """The sent folder must never hand the agent message content (#257 EARS) — the
+    client must not even look for a body field, so an over-broad server response
+    cannot silently become a content channel."""
+    def fake(method, path, **kw):
+        return {"sent": [{
+            "track_id": "01S1", "to_addrs": ["r@example.com"], "subject": "s",
+            "from_addr": "tokengate@mail.rodmena.co.uk", "status": "sent",
+            "created_at": "2026-08-02T00:00:00Z",
+            "text_body": "secret", "html_body": "<p>secret</p>",   # must be ignored
+        }]}
+    monkeypatch.setattr(am, "_request", fake)
+
+    got = am.sent()
+    assert got[0].track_id == "01S1"
+    assert not hasattr(got[0], "body"), "Sent carries a body field"
+    assert "secret" not in str(got), "a body leaked into the sent-folder record"
