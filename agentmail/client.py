@@ -479,7 +479,7 @@ class AgentMail:
         # delivered" here for a message that had in fact been delivered.
         rows = listing.get("inbound", []) if isinstance(listing, dict) else listing
 
-        diverged, visible = [], []
+        diverged, visible, for_other_agent = [], [], []
         for r in rows:
             iid = r.get("inbound_id")
             if not iid:
@@ -487,14 +487,51 @@ class AgentMail:
             entry = {"inbound_id": iid, "from": r.get("from_addr"),
                      "subject": r.get("subject") or "", "received_at": r.get("received_at")}
             # Seen locally but still outstanding server-side == handled here, never acked there.
-            (diverged if self._state.is_seen(iid) else visible).append(entry)
+            if self._state.is_seen(iid):
+                diverged.append(entry)
+                continue
+            # #366: a note addressed to a DIFFERENT co-resident agent is outstanding on
+            # purpose — inbox() withholds it, deliberately without marking it seen, so it
+            # still reaches the agent it was for. Counting it as visible made `backlog` and
+            # `inbox` disagree (1 vs 0) with no way for the reader to tell why, which is the
+            # confusion this command exists to remove.
+            #
+            # Only a message from our OWN address can be a note, so the detail fetch that
+            # reads the front matter is limited to those rather than every row.
+            target = self._note_addressee(r)
+            if target is not None and not P.note_is_for(target, self.agent):
+                entry["to_agent"] = target
+                for_other_agent.append(entry)
+            else:
+                visible.append(entry)
 
         return {
+            # Equal to what inbox() would hand this agent (FR-BACK-8), so the two commands
+            # reconcile by construction rather than by the reader's inference.
             "agent_sees": len(visible),
             "server_unconsumed": len(rows),
             "diverged": diverged,
+            "for_other_agent": for_other_agent,
             "pending_acks": self._state.pending_acks(),
         }
+
+    def _note_addressee(self, row: dict[str, Any]) -> str | None:
+        """The `to-agent` of a note, or None if this is not an addressed note (#366).
+
+        Returns None cheaply for ordinary bus traffic: only a message from our own platform
+        address can be a self-note, so nothing else costs a request. A failed lookup also
+        returns None, which classifies the row as visible — the safe direction, since showing
+        a message that might not be ours beats hiding one that is.
+        """
+        if (row.get("from_addr") or "").strip().lower() != self.address.lower():
+            return None
+        try:
+            detail = self._request("GET", f"/api/v1/inbound/{row['inbound_id']}") or {}
+        except AgentMailError:
+            return None
+        body = detail.get("inbound", detail)
+        meta, _ = P.decode_body(body.get("text_body") or body.get("html_body") or "")
+        return P.sanitise_agent(meta.get("to-agent", "")) or None
 
     def reconcile(self) -> int:
         """Ack the diverged messages — those this agent has ALREADY seen. Returns the count.
