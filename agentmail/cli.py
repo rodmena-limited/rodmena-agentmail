@@ -109,6 +109,14 @@ def main(argv: list[str] | None = None) -> int:
                         help="the other agent's name; omit to leave it for whoever reads next")
     p_note.add_argument("--ref", default=None)
 
+    p_bk = sub.add_parser(
+        "backlog",
+        help="compare what you see against what the server still holds (ack divergence)")
+    p_bk.add_argument("--json", action="store_true")
+    p_bk.add_argument("--reconcile", action="store_true",
+                      help="ack the diverged ids — only messages you have ALREADY seen. "
+                           "Never touches mail you have not been shown.")
+
     p_notes = sub.add_parser("notes", help="notes addressed to this agent (does not consume)")
     p_notes.add_argument("--json", action="store_true")
     p_notes.add_argument("--limit", type=int, default=50)
@@ -188,6 +196,29 @@ def main(argv: list[str] | None = None) -> int:
         target = f"agent '{args.to_agent}'" if args.to_agent else "whoever reads next"
         print(f"note left for {target} (thread {thread})")
         return 0
+
+    if args.cmd == "backlog":
+        b = am.backlog()
+        if args.json:
+            print(json.dumps(b, indent=2))
+        else:
+            print(f"agent sees      : {b['agent_sees']}")
+            print(f"server holds    : {b['server_unconsumed']}")
+            print(f"diverged        : {len(b['diverged'])}")
+            print(f"pending acks    : {len(b['pending_acks'])}")
+            for d in b["diverged"]:
+                print(f"    {d['inbound_id']}  {d['received_at'] or '':<28} "
+                      f"{(d['from'] or ''):<32} {d['subject'][:44]}")
+            if b["diverged"]:
+                print("\nThese were shown to this agent but the server still lists them as "
+                      "outstanding.\nInspect them, then `agentmail backlog --reconcile` to ack "
+                      "exactly these ids.")
+            else:
+                print("\nboth readers agree - no divergence")
+        if args.reconcile and b["diverged"]:
+            print(f"reconciled: acked {am.reconcile()} message(s)")
+            return 0
+        return 1 if b["diverged"] else 0
 
     if args.cmd == "notes":
         _print_messages(am.notes(limit=args.limit), args.json)

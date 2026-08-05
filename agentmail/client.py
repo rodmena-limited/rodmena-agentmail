@@ -444,6 +444,64 @@ class AgentMail:
         self._state.mark_seen(inbound_id)
         self._state.save()
 
+    def backlog(self, limit: int = 200) -> dict[str, Any]:
+        """Compare what THIS agent sees against what the server still holds (#361).
+
+        The diagnostic for an ack divergence, and deliberately not `pending_acks()`: that only
+        records failures since #358 shipped, so on a historical backlog it returns an empty,
+        reassuring list — a check that cannot go red for the population being sought. RunFlow
+        reported that back after following exactly that advice and concluding, wrongly, that
+        they were unaffected.
+
+        Two INDEPENDENT reads of one fact. Polling the same client twice is repetition, not
+        corroboration; a divergence is only visible when the readers can disagree.
+
+        Returns ids, not just counts (FR-BACK-2): two readers can agree on "7" while
+        disagreeing about which seven, and only the ids tell an agent what to inspect.
+
+        Purely diagnostic — consumes nothing (FR-BACK-4). `reconcile()` is the separate,
+        explicit action.
+        """
+        listing = self._request(
+            "GET", f"/api/v1/inbound?limit={int(limit)}&unconsumed=true") or {}
+        # The key is `inbound`, NOT `messages`. Reading the wrong one returns an empty list
+        # that looks exactly like a clean result — that mistake produced a confident "never
+        # delivered" here for a message that had in fact been delivered.
+        rows = listing.get("inbound", []) if isinstance(listing, dict) else listing
+
+        diverged, visible = [], []
+        for r in rows:
+            iid = r.get("inbound_id")
+            if not iid:
+                continue
+            entry = {"inbound_id": iid, "from": r.get("from_addr"),
+                     "subject": r.get("subject") or "", "received_at": r.get("received_at")}
+            # Seen locally but still outstanding server-side == handled here, never acked there.
+            (diverged if self._state.is_seen(iid) else visible).append(entry)
+
+        return {
+            "agent_sees": len(visible),
+            "server_unconsumed": len(rows),
+            "diverged": diverged,
+            "pending_acks": self._state.pending_acks(),
+        }
+
+    def reconcile(self) -> int:
+        """Ack the diverged messages — those this agent has ALREADY seen. Returns the count.
+
+        Never touches a message the agent has not been shown (FR-BACK-5): setting
+        `consumed_at` on something unread replaces a visible problem with an invisible one,
+        which is strictly worse than the backlog it would tidy away.
+        """
+        acked = 0
+        for entry in self.backlog()["diverged"]:
+            try:
+                self._request("POST", f"/api/v1/inbound/{entry['inbound_id']}/ack")
+                acked += 1
+            except AgentMailError as e:
+                logger.warning("agentmail_reconcile_failed id=%s: %s", entry["inbound_id"], e)
+        return acked
+
     def pending_acks(self) -> list[str]:
         """Messages consumed locally whose server ack has not yet succeeded (#358).
 
