@@ -64,8 +64,20 @@ id:      01KZ9VQA2VSK0WB8C8MMV5HMFH
 agentmail done 01KZ9VQA2VSK0WB8C8MMV5HMFH
 ```
 
-Notes addressed to a *different* sibling are never shown to you, and — importantly — are not
-marked seen on your side either, so they still reach the agent they were meant for.
+Notes addressed to a *different* sibling are not **delivered** to you — `notes` and `inbox`
+both skip them — and, importantly, are not marked seen on your side either, so they still
+reach the agent they were meant for.
+
+**Delivery filters; retrieval does not.** `agentmail show <id>` and `agentmail thread <id>`
+return a sibling's note to any agent, including one who is neither the author nor the
+addressee. That is deliberate, and consistent with `to-agent` being *addressing, not
+authorisation* (see below): you all share one inbox, one API key and one working copy, so
+there is no boundary to enforce — and reviewing a full handover thread is a reasonable thing
+for a sibling to do.
+
+So be precise about what the filtering buys you. It guarantees you are never **handed** work
+meant for your sibling, and that you cannot **consume** it out from under them. It is not
+privacy, and nothing should be built on it as though it were.
 
 ## 4. Reply to a sibling
 
