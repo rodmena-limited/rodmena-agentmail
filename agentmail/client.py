@@ -412,8 +412,12 @@ class AgentMail:
             return None
         return self._to_message(row, row)
 
-    def done(self, msg: "Message | str") -> None:
+    def done(self, msg: "Message | str") -> bool:
         """Mark a message consumed so it stops being re-delivered, on EVERY machine.
+
+        Returns True if the SERVER acked it, False if the ack failed and it was queued for
+        retry instead (#363). False is not data loss — the queue drains on the next poll —
+        but it is not completion either, and a caller must be able to tell.
 
         Call this when the work it describes is durable — a ticket opened, a fix committed, a
         reply sent. `reply()` calls it for you, since answering is proof of handling.
@@ -425,10 +429,12 @@ class AgentMail:
         like a processing failure.
         """
         inbound_id = msg if isinstance(msg, str) else msg.inbound_id
+        acked = True
         try:
             self._request("POST", f"/api/v1/inbound/{inbound_id}/ack")
             self._state.clear_pending_ack(inbound_id)
         except AgentMailError as e:
+            acked = False
             # #358. Do NOT stop at a log line. This used to mark the message seen and move on,
             # which turned a transient blip into a permanent, silent divergence: invisible to
             # this agent forever, outstanding on the server forever, and `consumed_at` (added
@@ -443,6 +449,10 @@ class AgentMail:
             self._state.add_pending_ack(inbound_id)
         self._state.mark_seen(inbound_id)
         self._state.save()
+        # #363: tell the caller whether the SERVER consumed it, or whether this was merely
+        # queued. Returning None made "deferred" and "done" indistinguishable — the library
+        # stopped swallowing the failure in #358, but every caller still reported success.
+        return acked
 
     def backlog(self, limit: int = 200) -> dict[str, Any]:
         """Compare what THIS agent sees against what the server still holds (#361).
