@@ -28,6 +28,9 @@ DEFAULT_STATE_DIR = Path.home() / ".config" / "rodmena" / "agentmail" / "state"
 #: Keep the seen-set bounded. Well above any realistic backlog, far below unbounded growth.
 _MAX_SEEN = 5000
 _MAX_REPLIED = 5000
+#: FR-ACK-4: bounded, so a server that is down for a long time cannot grow the file without
+#: limit. Oldest are dropped first — they are also the least likely to still matter.
+_MAX_PENDING_ACK = 1000
 
 
 class State:
@@ -65,11 +68,13 @@ class State:
         self._data.setdefault("seen", [])
         self._data.setdefault("replied", [])
         self._data.setdefault("threads", {})
+        self._data.setdefault("pending_ack", [])
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._data["seen"] = self._data["seen"][-_MAX_SEEN:]
         self._data["replied"] = self._data["replied"][-_MAX_REPLIED:]
+        self._data["pending_ack"] = self._data["pending_ack"][-_MAX_PENDING_ACK:]
         tmp = self.path.with_suffix(".tmp")
         tmp.write_text(json.dumps(self._data, indent=1))
         os.chmod(tmp, 0o600)
@@ -82,6 +87,25 @@ class State:
     def mark_seen(self, inbound_id: str) -> None:
         if inbound_id not in self._data["seen"]:
             self._data["seen"].append(inbound_id)
+
+    # -- pending acks (#358) --------------------------------------------------------------
+    # A server ack that failed. The message is still marked seen locally — the agent finished
+    # the work and must not be handed it twice — but WITHOUT this list the failure became a
+    # permanent, silent divergence: invisible here forever, outstanding on the server forever,
+    # and `consumed_at` reporting never-read for a message that was read and acted on.
+    # Measured before the fix: client said 0 unconsumed, server said 35.
+    def pending_acks(self) -> list[str]:
+        return list(self._data.get("pending_ack", []))
+
+    def add_pending_ack(self, inbound_id: str) -> None:
+        p = self._data.setdefault("pending_ack", [])
+        if inbound_id not in p:
+            p.append(inbound_id)
+
+    def clear_pending_ack(self, inbound_id: str) -> None:
+        p = self._data.setdefault("pending_ack", [])
+        if inbound_id in p:
+            p.remove(inbound_id)
 
     # -- replied ------------------------------------------------------------------------
     def has_replied(self, message_id: str | None) -> bool:
