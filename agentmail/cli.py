@@ -204,8 +204,14 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(f"agent sees      : {b['agent_sees']}")
             print(f"server holds    : {b['server_unconsumed']}")
-            print(f"diverged        : {len(b['diverged'])}")
-            print(f"pending acks    : {len(b['pending_acks'])}")
+            print(f"diverged        : {len(b['diverged'])}   <- the finding")
+            # #372: two platforms independently misread a zero here as "no divergence", because
+            # it printed as a peer of the line above. pending_acks only records ack failures
+            # since the #358 fix shipped, so it is STRUCTURALLY zero for any historical
+            # backlog — the number that matters and the number that cannot move looked
+            # identical.
+            print(f"pending acks    : {len(b['pending_acks'])}   "
+                  f"<- forward-looking guard only; cannot detect a historical backlog")
             # #366: name the third category, so `server holds` reconciles with what this
             # agent is shown instead of leaving an unexplained gap.
             other = b.get("for_other_agent") or []
@@ -222,6 +228,12 @@ def main(argv: list[str] | None = None) -> int:
                 print("\nThese were shown to this agent but the server still lists them as "
                       "outstanding.\nInspect them, then `agentmail backlog --reconcile` to ack "
                       "exactly these ids.")
+                if not b["pending_acks"]:
+                    # FR-PA-2: name the exact pair both reporters saw, so nobody has to
+                    # rediscover that it is expected rather than contradictory.
+                    print("`pending acks: 0` alongside a non-zero `diverged` is EXPECTED for a "
+                          "historical backlog\nand is not evidence against it — these acks "
+                          "failed before the retry queue existed.")
             else:
                 print("\nboth readers agree - no divergence")
         if args.reconcile and b["diverged"]:
