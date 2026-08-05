@@ -60,6 +60,12 @@ PLATFORMS: dict[str, tuple[str, str, str, str]] = {
     # tenant `bus_participant` makes its inbox silently drop all non-bus mail.
     # Local dir is `red9`; the canonical repo slug is `red9-chat`.
     "red-dev-team": (f"red-dev-team@{MAIL_DOMAIN}", "RED9 Dev Team", "~/develop/red9", "rodmena-limited/red9-chat"),
+    # #355. Bus identity is `baseframe`, one lower-case word: the checkout is
+    # ~/develop/BaseFrame but a client key must match ^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$.
+    # platform_for_path resolves both of these by GIT REMOTE before it ever looks at the
+    # directory name, so the mixed-case path costs nothing.
+    "ledger":    (f"ledger@{MAIL_DOMAIN}",    "Ledger",    "~/develop/ledger",    "rodmena-limited/ledger"),
+    "baseframe": (f"baseframe@{MAIL_DOMAIN}", "BaseFrame", "~/develop/BaseFrame", "rodmena-limited/BaseFrame"),
     # Not a platform repo: the identity a human operator uses to file against the bus itself.
     # Without it, a bus-level defect can only be reported by borrowing a platform's identity.
     "operator":  (f"operator@{MAIL_DOMAIN}",  "Operator",  "",                           ""),
