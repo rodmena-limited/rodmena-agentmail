@@ -78,3 +78,25 @@ def test_remote_normalisation():
     n = _normalise_remote
     assert n("git@github.com:rodmena-limited/TokenGate.git") == "rodmena-limited/tokengate"
     assert n("https://github.com/rodmena-limited/TokenGate/") == "rodmena-limited/tokengate"
+
+
+def test_registry_entries_are_4_tuples_of_str():
+    """#382: a 3-tuple entry does not degrade — it raises at import in _BY_ADDRESS and
+    kills the CLI for every platform on the machine. Shape is a contract; hold it here
+    so the stale ONBOARDING example class cannot come back."""
+    from agentmail.registry import PLATFORMS
+    for key, entry in PLATFORMS.items():
+        assert isinstance(entry, tuple) and len(entry) == 4, (
+            f"{key!r}: registry entries are (address, name, path, repo) 4-tuples, got {entry!r}")
+        assert all(isinstance(f, str) for f in entry), key
+        assert entry[0].endswith("@mail.rodmena.co.uk"), key
+
+
+def test_repo_of_returns_the_repo_slug_not_the_path():
+    """#383: repo_of returned the checkout PATH (index 2). It answers with the canonical
+    git slug, and None for the operator identity, which has no repo."""
+    from agentmail.registry import repo_of
+    assert repo_of("prism") == "rodmena-limited/prism"
+    assert repo_of("mail-api") == "rodmena-limited/rodmena-mail-api"
+    assert repo_of("operator") is None
+    assert repo_of("no-such-platform") is None

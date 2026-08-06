@@ -66,6 +66,9 @@ PLATFORMS: dict[str, tuple[str, str, str, str]] = {
     # directory name, so the mixed-case path costs nothing.
     "ledger":    (f"ledger@{MAIL_DOMAIN}",    "Ledger",    "~/develop/ledger",    "rodmena-limited/ledger"),
     "baseframe": (f"baseframe@{MAIL_DOMAIN}", "BaseFrame", "~/develop/BaseFrame", "rodmena-limited/BaseFrame"),
+    # #378. prism — github rodmena-limited/prism, checkout ~/develop/prism. Single lowercase
+    # word, valid client_key. Added so `agentmail whoami` resolves this checkout to `prism`.
+    "prism":     (f"prism@{MAIL_DOMAIN}",     "Prism",     "~/develop/prism",           "rodmena-limited/prism"),
     # Not a platform repo: the identity a human operator uses to file against the bus itself.
     # Without it, a bus-level defect can only be reported by borrowing a platform's identity.
     "operator":  (f"operator@{MAIL_DOMAIN}",  "Operator",  "",                           ""),
@@ -97,8 +100,11 @@ def is_registered(address: str | None) -> bool:
 
 
 def repo_of(platform: str) -> str | None:
+    """Canonical git repo slug (`owner/name`) for a platform, or None where there is
+    none (the operator identity). #383: this returned the conventional checkout PATH
+    (tuple index 2) — wrong column, latent since no caller existed yet."""
     entry = PLATFORMS.get(platform.lower())
-    return entry[2] or None if entry else None
+    return (entry[3] or None) if entry else None
 
 
 def _normalise_remote(url: str) -> str:
