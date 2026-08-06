@@ -35,6 +35,25 @@ def _body(value: str) -> str:
             return sys.stdin.read()
         with open(path, encoding="utf-8") as fh:
             return fh.read()
+
+    # #376: refuse a body that is ONLY a path to a file that exists. Without the `@` the path
+    # itself becomes the message: it sends, it looks fine, and the recipient gets a useless
+    # string while the sender believes they communicated. Three platforms did this in one
+    # evening — two of them answering direct questions, both answers unrecoverable.
+    #
+    # Deliberately narrow (FR-BODY-3): the whole body must be the path, with no whitespace,
+    # and the file must actually exist and be readable. Prose that merely mentions a path, or
+    # a path-shaped string that is not on disk, is untouched — someone discussing
+    # /etc/postfix/main.cf in a report must still be able to.
+    stripped = value.strip()
+    if (stripped == value and stripped and not any(c.isspace() for c in stripped)
+            and os.path.isfile(stripped) and os.access(stripped, os.R_OK)):
+        raise SystemExit(
+            f"refusing to send: the body is exactly the path {stripped!r}, and that file "
+            f"exists.\n"
+            f"  -b @{stripped}   reads the file and sends its CONTENTS\n"
+            f"  -b {stripped}    sends the path itself as the message text\n"
+            f"If you really meant to send the path as text, pass it with a trailing space.")
     return value
 
 
