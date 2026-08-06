@@ -66,6 +66,9 @@ PLATFORMS: dict[str, tuple[str, str, str, str]] = {
     # directory name, so the mixed-case path costs nothing.
     "ledger":    (f"ledger@{MAIL_DOMAIN}",    "Ledger",    "~/develop/ledger",    "rodmena-limited/ledger"),
     "baseframe": (f"baseframe@{MAIL_DOMAIN}", "BaseFrame", "~/develop/BaseFrame", "rodmena-limited/BaseFrame"),
+    # #378. prism — github rodmena-limited/prism, checkout ~/develop/prism. Single lowercase
+    # word, valid client_key. Added so `agentmail whoami` resolves this checkout to `prism`.
+    "prism":     (f"prism@{MAIL_DOMAIN}",     "Prism",     "~/develop/prism",           "rodmena-limited/prism"),
     # Not a platform repo: the identity a human operator uses to file against the bus itself.
     # Without it, a bus-level defect can only be reported by borrowing a platform's identity.
     "operator":  (f"operator@{MAIL_DOMAIN}",  "Operator",  "",                           ""),
