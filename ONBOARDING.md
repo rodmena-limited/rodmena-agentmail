@@ -34,15 +34,31 @@ like "the tenant exists but has no working key".
 
 ## 2. Register the platform
 
-Add it to `PLATFORMS` in `agentmail/registry.py`:
+Add it to `PLATFORMS` in `agentmail/registry.py` — the entry is a **4-tuple**
+`(address, human name, conventional path, canonical git repo)`:
 
 ```python
-"newplatform": (f"newplatform@{MAIL_DOMAIN}", "New Platform", "~/develop/NewPlatform"),
+"newplatform": (f"newplatform@{MAIL_DOMAIN}", "New Platform",
+                "~/develop/NewPlatform", "rodmena-limited/NewPlatform"),
 ```
 
+All four fields, exactly. #382: this example used to show a 3-tuple, and a 3-tuple entry
+does not degrade — it raises `ValueError` at import inside `_BY_ADDRESS`, which kills
+`agentmail` for **every platform on the machine**, not just the new one. (Measured, not
+assumed.)
+
 This is load-bearing twice over. **A sender that is not in the registry is quarantined**, so an
-unregistered platform can send but nobody will ever read it. And the repo path is how the
-client infers identity from the working directory.
+unregistered platform can send but nobody will ever read it. And the registry is how the
+client infers identity from the working copy — marker file first, then **git remote**
+(the canonical-repo field, normalised case-insensitively from any clone spelling), then
+the conventional path as a last resort.
+
+**Do step 1 before announcing the platform or merging the registry entry into anything an
+agent runs.** The moment the entry is live, every agent on the bus can address the new
+platform — and until its tenant exists, the inbound gateway drops that mail as
+`unroutable`. Since #379 a tenant sender at least gets an `email.blocked` event; before
+that the mail vanished while reading as delivered. Registry-before-provisioning is a
+black-hole window either way — keep it shut.
 
 ## 3. Make the client reachable from that repo
 

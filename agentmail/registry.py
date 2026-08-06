@@ -100,8 +100,11 @@ def is_registered(address: str | None) -> bool:
 
 
 def repo_of(platform: str) -> str | None:
+    """Canonical git repo slug (`owner/name`) for a platform, or None where there is
+    none (the operator identity). #383: this returned the conventional checkout PATH
+    (tuple index 2) — wrong column, latent since no caller existed yet."""
     entry = PLATFORMS.get(platform.lower())
-    return entry[2] or None if entry else None
+    return (entry[3] or None) if entry else None
 
 
 def _normalise_remote(url: str) -> str:
