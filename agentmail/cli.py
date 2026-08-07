@@ -210,10 +210,18 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.cmd == "note":
+        # #387 (ledger's misattributed-note report): the acting name is a client-side label
+        # nothing can validate — the one party who CAN catch a wrong AGENTMAIL_AGENT is the
+        # operator reading this confirmation, at the moment of emission. Say who spoke.
+        if args.to_agent and am.agent and args.to_agent == am.agent:
+            print(f"warning: this note is addressed to YOURSELF (agent '{am.agent}' -> "
+                  f"'{args.to_agent}') — is AGENTMAIL_AGENT set to the name you intended?",
+                  file=sys.stderr)
         thread = am.note(args.subject, _body(args.body),
                          to_agent=args.to_agent, ref=args.ref)
         target = f"agent '{args.to_agent}'" if args.to_agent else "whoever reads next"
-        print(f"note left for {target} (thread {thread})")
+        actor = f"agent '{am.agent}'" if am.agent else "this platform's UNNAMED agent"
+        print(f"note left by {actor} for {target} (thread {thread})")
         return 0
 
     if args.cmd == "backlog":
@@ -329,7 +337,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "send":
         thread = am.send(args.to, args.subject, _body(args.body), type=args.type,
                          severity=args.severity, ref=args.ref)
-        print(f"sent to {args.to} (thread {thread})")
+        actor = f" as agent '{am.agent}'" if am.agent else ""
+        print(f"sent to {args.to}{actor} (thread {thread})")
         # Advisory only, and AFTER the send: the message is already away, so this is feedback
         # for the next one rather than a gate on this one.
         if am.opener_warnings:
@@ -352,7 +361,8 @@ def main(argv: list[str] | None = None) -> int:
         if thread is None:
             print(f"refused: {am.why_refused(msg)}", file=sys.stderr)
             return 4
-        print(f"replied to {msg.sender} (thread {thread})")
+        actor = f" as agent '{am.agent}'" if am.agent else ""
+        print(f"replied to {msg.sender}{actor} (thread {thread})")
         return 0
 
     return 0

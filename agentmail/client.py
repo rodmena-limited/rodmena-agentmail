@@ -598,6 +598,16 @@ class AgentMail:
         takes seconds, not milliseconds, and every note is permanently retained and readable
         by a human. If the two agents can simply share a file in the working copy, do that
         instead; use a note when you want it timestamped, attributable and durable.
+
+        ATTRIBUTION IS A LABEL, NOT A FACT (#387, ledger's misattributed-note report). The
+        sending agent name is whatever this process was configured with — like `to_agent`
+        it rides in forgeable front matter, and NO client-side check can bind it: two
+        co-resident agents share one API key, one unix user and one checkout, so anything
+        the client verified, a misconfigured (or lying) session could satisfy identically.
+        The CLI therefore echoes the acting identity on every emission so a wrong
+        AGENTMAIL_AGENT is visible the moment it speaks; if a record needs attribution that
+        can survive dispute — an audit trail — put it in the artifact (a signed commit, a
+        ticket entry), never in a message envelope.
         """
         return self.send(self.platform, subject, body, type="note",
                          ref=ref, thread_id=thread_id, to_agent=to_agent)
